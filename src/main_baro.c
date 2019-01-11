@@ -50,7 +50,7 @@ static void ms5611_task_func(struct worker_thread_timer_task_s* task) {
             ms5611_measure_temperature(&ms5611);
             if (accum_count >= 2) {
                 press.static_pressure = (float)ms5611_read_pressure(&ms5611);
-                temp.static_temperature = ((float)ms5611_read_temperature(&ms5611))/100.0f;
+                temp.static_temperature = ((float)ms5611_read_temperature(&ms5611))/100.0f + 273.15f;
                 uavcan_broadcast(0, &uavcan_equipment_air_data_StaticPressure_descriptor, CANARD_TRANSFER_PRIORITY_HIGH, &press);
                 uavcan_broadcast(0, &uavcan_equipment_air_data_StaticTemperature_descriptor, CANARD_TRANSFER_PRIORITY_HIGH, &temp);
                 accum_count = 0;
