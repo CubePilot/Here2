@@ -19,7 +19,7 @@ static void profiled_task_func(struct worker_thread_timer_task_s* task);
 static void led_command_handler(size_t msg_size, const void* buf, void* ctx);
 
 RUN_AFTER(INIT_END) {
-    profiLED_init(&profiled_instance, 3, BOARD_PAL_LINE_SPI3_PROFILED_CS, true, 5);
+    profiLED_init(&profiled_instance, 3, BOARD_PAL_LINE_SPI3_PROFILED_CS, true, 4);
     worker_thread_add_timer_task(&WT, &profiled_task, profiled_task_func, NULL, MS2ST(10), true);
     struct pubsub_topic_s* led_command_topic = uavcan_get_message_topic(0, &uavcan_equipment_indication_LightsCommand_descriptor);
     worker_thread_add_listener_task(&WT, &led_command_task, led_command_topic, led_command_handler, NULL);
@@ -28,10 +28,9 @@ RUN_AFTER(INIT_END) {
 static void profiled_task_func(struct worker_thread_timer_task_s* task) {
     (void)task;
     if (i2c_slave_led_updated()) {
-        profiLED_set_color_hex(&profiled_instance, 0, i2c_slave_retrieve_led_color_hex());
-        profiLED_set_color_hex(&profiled_instance, 1, i2c_slave_retrieve_led_color_hex());
-        profiLED_set_color_hex(&profiled_instance, 2, i2c_slave_retrieve_led_color_hex());
-        profiLED_set_color_hex(&profiled_instance, 3, i2c_slave_retrieve_led_color_hex());
+        for (uint8_t i=0; i<4; i++) {
+            profiLED_set_color_hex(&profiled_instance, i, i2c_slave_retrieve_led_color_hex());
+        }
     }
     profiLED_update(&profiled_instance);
 }
@@ -45,10 +44,9 @@ static void led_command_handler(size_t msg_size, const void* buf, void* ctx)
     if (msg->commands_len > 0) {
         if (msg->commands[0].light_id == 0) {
             for (uint8_t j = 0; j < 4; j++) {
-                profiLED_set_color_rgb(&profiled_instance, j, ((uint32_t)(msg->commands[0].color.red))*8,
-                                                            ((uint32_t)(msg->commands[0].color.green))*4,
-                                                            ((uint32_t)(msg->commands[0].color.blue))*8);
+                profiLED_set_color_rgb(&profiled_instance, j, ((uint32_t)(msg->commands[0].color.red))*8, ((uint32_t)(msg->commands[0].color.green))*4, ((uint32_t)(msg->commands[0].color.blue))*8);
             }
         }
     }
+    profiLED_update(&profiled_instance);
 }
