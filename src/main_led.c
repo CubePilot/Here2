@@ -9,7 +9,6 @@
 #include <main_i2c_slave.h>
 
 static struct profiLED_instance_s profiled_instance;
-static struct profiLED_gen_color_s colors[4];
 
 #define WT lpwork_thread
 WORKER_THREAD_DECLARE_EXTERN(WT)
@@ -20,7 +19,6 @@ static void profiled_task_func(struct worker_thread_timer_task_s* task);
 static void led_command_handler(size_t msg_size, const void* buf, void* ctx);
 
 RUN_AFTER(INIT_END) {
-    profiled_instance.colors = colors;
     profiLED_init(&profiled_instance, 3, BOARD_PAL_LINE_SPI3_PROFILED_CS, true, 5);
     worker_thread_add_timer_task(&WT, &profiled_task, profiled_task_func, NULL, MS2ST(10), true);
     struct pubsub_topic_s* led_command_topic = uavcan_get_message_topic(0, &uavcan_equipment_indication_LightsCommand_descriptor);

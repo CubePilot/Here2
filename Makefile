@@ -28,7 +28,7 @@ gps \
 spi_device \
 driver_ak09916 \
 driver_icm20x48 \
-driver_profiled \
+driver_profiLED \
 driver_ms5611
 
 MESSAGES_ENABLED = \
