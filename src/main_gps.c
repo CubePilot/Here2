@@ -472,7 +472,9 @@ static void ubx_cfg_rate_handler(size_t msg_size, const void* msg, void* ctx)
     struct ubx_cfg_rate_getset_s *cfg_rate = ubx_parse_ubx_cfg_rate_getset(parsed_msg->frame_buffer, parsed_msg->msg_len);
     if (cfg_rate != NULL) {
         if (cfg_rate->measRate == 200 && cfg_rate->navRate == 1 && cfg_rate->timeRef == 0) {
-            _handle->cfg_step++;
+            if (_handle->cfg_step == STEP_CFG_RATE) {
+                _handle->cfg_step++;
+            }
             _handle->do_cfg = false;
             gps_debug("CFG-RATE", "CFG Rate Set");
         } else {

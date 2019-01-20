@@ -17,6 +17,8 @@ worker_thread \
 can_driver_stm32 \
 can \
 can_autobaud \
+flash \
+param \
 uavcan \
 uavcan_debug \
 uavcan_nodestatus_publisher \
@@ -24,6 +26,7 @@ uavcan_getnodeinfo_server \
 uavcan_beginfirmwareupdate_server \
 uavcan_allocatee \
 uavcan_restart \
+uavcan_param_interface \
 freemem_check \
 gps \
 spi_device \
