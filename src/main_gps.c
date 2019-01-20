@@ -203,7 +203,7 @@ static void ubx_init(struct ubx_gps_handle_s *ubx_handle, SerialDriver* serial, 
 
 static void send_init_blob(SerialDriver* serial)
 {
-    sdWrite(serial, (const uint8_t*)init_blob, sizeof(init_blob));
+    sdWrite(serial, (const uint8_t*)init_blob, sizeof(init_blob)-1);
 }
 
 static void send_message(uint8_t class_id, uint8_t msg_id, uint8_t* payload, size_t payload_len)
