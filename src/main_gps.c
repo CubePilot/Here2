@@ -143,7 +143,7 @@ struct ubx_msg_cfg_s ubx_cfg_list[] = {
 };
 
 
-THD_WORKING_AREA(ubx_gps_thd_wa, 512);
+THD_WORKING_AREA(ubx_gps_thd_wa, 256);
 RUN_AFTER(INIT_END) {
     gps_init(&gps_handle);
     ubx_init(&ubx_handle, &GPS_SERIAL, &gps_default_sercfg);
