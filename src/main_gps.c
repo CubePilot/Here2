@@ -3,6 +3,7 @@
 #include <modules/timing/timing.h>
 #include <common/helpers.h>
 #include <modules/gps/gps.h>
+#include <modules/param/param.h>
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
@@ -23,6 +24,7 @@ WORKER_THREAD_DECLARE_EXTERN(WT)
 #define UBX_MSG_TOPIC_GROUP PUBSUB_DEFAULT_TOPIC_GROUP
 PUBSUB_TOPIC_GROUP_DECLARE_EXTERN(UBX_MSG_TOPIC_GROUP)
 
+PARAM_DEFINE_UINT8_PARAM_STATIC(nav5_dynModel, "dynModel", 8, 0, 10)
 
 //#define gps_debug(msg, fmt, args...) do {uavcan_send_debug_msg(LOG_LEVEL_DEBUG, msg, fmt,  __FUNCTION__, __LINE__, ## args); } while(0);
 #define gps_debug(msg, fmt, args...)
@@ -88,6 +90,7 @@ uint8_t parsed_msg_buffer[1024];
 
 enum ubx_cfg_steps {
     STEP_CFG_RATE,
+    STEP_CFG_NAV5,
     STEP_CFG_MSG
 };
 
@@ -126,6 +129,11 @@ struct worker_thread_listener_task_s ubx_nav_pvt_listener;
 static void ubx_nav_pvt_handler(size_t msg_size, const void* msg, void* ctx);
 //NAV-STATUS
 //static void ubx_nav_status_handler(size_t msg_size, const void* msg, void* ctx);
+
+//NAV-PVT
+struct pubsub_topic_s ubx_cfg_nav5_topic;
+struct worker_thread_listener_task_s ubx_cfg_nav5_listener;
+static void ubx_cfg_nav5_handler(size_t msg_size, const void* msg, void* ctx);
 
 static void gps_inject_handler(size_t msg_size, const void* buf, void* ctx);
 
@@ -185,6 +193,13 @@ static void ubx_init(struct ubx_gps_handle_s *ubx_handle, SerialDriver* serial, 
     if (gps_ubx_init_msg_topic(&gps_handle, UBX_CFG_MSG_CLASS_ID, UBX_CFG_MSG_MSG_ID, parsed_msg_buffer, sizeof(parsed_msg_buffer), &ubx_cfg_msg_topic)) {
         worker_thread_add_listener_task(&WT, &ubx_cfg_msg_listener, &ubx_cfg_msg_topic, ubx_cfg_msg_handler, ubx_handle);
         uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "Registered Topic for 0x%x 0x%x", UBX_CFG_MSG_CLASS_ID, UBX_CFG_MSG_MSG_ID);
+    }
+
+    //CFG-NAV5
+    pubsub_init_topic(&ubx_cfg_nav5_topic, &UBX_MSG_TOPIC_GROUP);
+    if (gps_ubx_init_msg_topic(&gps_handle, UBX_CFG_NAV5_CLASS_ID, UBX_CFG_NAV5_MSG_ID, parsed_msg_buffer, sizeof(parsed_msg_buffer), &ubx_cfg_nav5_topic)) {
+        worker_thread_add_listener_task(&WT, &ubx_cfg_nav5_listener, &ubx_cfg_nav5_topic, ubx_cfg_nav5_handler, ubx_handle);
+        uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "Registered Topic for 0x%x 0x%x", UBX_CFG_NAV5_CLASS_ID, UBX_CFG_NAV5_MSG_ID);
     }
 
     //Register Messages in the cfg list
@@ -273,7 +288,7 @@ static void ubx_gps_configure_msgs()
     switch(ubx_handle.cfg_step) {
         case STEP_CFG_RATE: { //CFG_RATE
             if (ubx_handle.do_cfg) {
-                struct ubx_cfg_rate_getset_s cfg_rate;
+                struct ubx_cfg_rate_getset_s cfg_rate = {};
                 cfg_rate.measRate = 200;
                 cfg_rate.navRate = 1;
                 cfg_rate.timeRef = 0;
@@ -281,6 +296,20 @@ static void ubx_gps_configure_msgs()
                 ubx_handle.do_cfg = false;
             } else {
                 request_message(UBX_CFG_RATE_CLASS_ID, UBX_CFG_RATE_MSG_ID);
+            }
+            break;
+        }
+        case STEP_CFG_NAV5: {
+            if (ubx_handle.do_cfg) {
+                struct ubx_cfg_nav5_getset_s cfg_nav5 = {};
+
+                cfg_nav5.mask = 1; // apply only dynamic model settings
+                cfg_nav5.dynModel = nav5_dynModel;
+
+                send_message(UBX_CFG_NAV5_CLASS_ID, UBX_CFG_NAV5_MSG_ID, (uint8_t*)&cfg_nav5, sizeof(cfg_nav5));
+                ubx_handle.do_cfg = false;
+            } else {
+                request_message(UBX_CFG_NAV5_CLASS_ID, UBX_CFG_NAV5_MSG_ID);
             }
             break;
         }
@@ -308,6 +337,21 @@ static void ubx_gps_configure_msgs()
             break;
     }
 
+}
+
+static void ubx_cfg_nav5_handler(size_t msg_size, const void* msg, void* ctx) {
+    struct ubx_gps_handle_s* _handle = (struct ubx_gps_handle_s*)ctx;
+    const struct gps_msg *parsed_msg = msg;
+
+    struct ubx_cfg_nav5_getset_s *cfg_nav5 = ubx_parse_ubx_cfg_nav5_getset(parsed_msg->frame_buffer, parsed_msg->msg_len);
+
+    gps_debug("CFG-NAV5", "dynmodel = %u", cfg_nav5->dynModel);
+
+    if (_handle->cfg_step == STEP_CFG_NAV5 && cfg_nav5->dynModel == nav5_dynModel) {
+        _handle->cfg_step++;
+    } else {
+        ubx_handle.do_cfg = true;
+    }
 }
 
 //MSG Handlers
@@ -394,6 +438,7 @@ static void ubx_nav_pvt_handler(size_t msg_size, const void* msg, void* ctx)
                     _handle->state.fix.status = UAVCAN_EQUIPMENT_GNSS_FIX_STATUS_NO_FIX;
                     break;
             }
+
             //Misc
             _handle->state.fix.sats_used = nav_pvt->numSV;
             _handle->state.fix.pdop = nav_pvt->pDOP*0.01f;
