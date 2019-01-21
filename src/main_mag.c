@@ -46,8 +46,5 @@ static void ak09916_task_func(struct worker_thread_timer_task_s* task) {
         mag.magnetic_field_ga[2] = ak09916.meas.z/1000.0f;
         mag.magnetic_field_covariance_len = 0;
         uavcan_broadcast(0, &uavcan_equipment_ahrs_MagneticFieldStrength_descriptor, CANARD_TRANSFER_PRIORITY_HIGH, &mag);
-        // uavcan_send_debug_keyvalue("magX", ak09916.meas.x);
-        // uavcan_send_debug_keyvalue("magY", ak09916.meas.y);
-        // uavcan_send_debug_keyvalue("magZ", ak09916.meas.z);
     }
 }
