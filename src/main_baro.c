@@ -30,7 +30,9 @@ static void ms5611_listener_task_func(size_t msg_size, const void* msg, void* ct
     struct uavcan_equipment_air_data_StaticPressure_s press;
 
     press.static_pressure = sample->pressure_pa;
+    press.static_pressure_variance = 0;
     temp.static_temperature = sample->temperature_K;
+    temp.static_temperature_variance = 0;
     uavcan_broadcast(0, &uavcan_equipment_air_data_StaticPressure_descriptor, CANARD_TRANSFER_PRIORITY_HIGH, &press);
     uavcan_broadcast(0, &uavcan_equipment_air_data_StaticTemperature_descriptor, CANARD_TRANSFER_PRIORITY_HIGH, &temp);
 }
