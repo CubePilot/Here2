@@ -9,7 +9,6 @@
 #define WT hpwork_thread
 WORKER_THREAD_DECLARE_EXTERN(WT)
 
-
 static struct ak09916_instance_s ak09916;
 static struct icm20x48_instance_s icm20x48;
 static struct uavcan_equipment_ahrs_MagneticFieldStrength_s mag;
