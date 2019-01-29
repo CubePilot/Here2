@@ -152,7 +152,7 @@ RUN_AFTER(INIT_END) {
                         HIGHPRIO,               // Initial priority.
                         ubx_gps_spinner,             // Thread function.
                         NULL);              // Thread parameter.
-    worker_thread_add_timer_task(&WT, &ubx_handle.ubx_gps_init_task, ubx_gps_init_loop, &ubx_handle, MS2ST(100), true);
+    worker_thread_add_timer_task(&WT, &ubx_handle.ubx_gps_init_task, ubx_gps_init_loop, &ubx_handle, LL_MS2ST(100), true);
 }
 
 static void ubx_init(struct ubx_gps_handle_s *ubx_handle, SerialDriver* serial, SerialConfig *sercfg)

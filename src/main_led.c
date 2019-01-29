@@ -20,7 +20,7 @@ static void led_command_handler(size_t msg_size, const void* buf, void* ctx);
 
 RUN_AFTER(INIT_END) {
     profiLED_init(&profiled_instance, 3, BOARD_PAL_LINE_SPI3_PROFILED_CS, true, 4);
-    worker_thread_add_timer_task(&WT, &profiled_task, profiled_task_func, NULL, MS2ST(10), true);
+    worker_thread_add_timer_task(&WT, &profiled_task, profiled_task_func, NULL, LL_MS2ST(10), true);
     struct pubsub_topic_s* led_command_topic = uavcan_get_message_topic(0, &uavcan_equipment_indication_LightsCommand_descriptor);
     worker_thread_add_listener_task(&WT, &led_command_task, led_command_topic, led_command_handler, NULL);
 }

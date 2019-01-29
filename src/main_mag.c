@@ -27,7 +27,7 @@ RUN_AFTER(INIT_END) {
         }
         usleep(10000);
     }
-    worker_thread_add_timer_task(&WT, &ak09916_task, ak09916_task_func, NULL, MS2ST(1), true);
+    worker_thread_add_timer_task(&WT, &ak09916_task, ak09916_task_func, NULL, LL_MS2ST(1), true);
 }
 
 static void ak09916_task_func(struct worker_thread_timer_task_s* task) {
