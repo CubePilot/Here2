@@ -340,6 +340,7 @@ static void ubx_gps_configure_msgs()
 }
 
 static void ubx_cfg_nav5_handler(size_t msg_size, const void* msg, void* ctx) {
+    (void)msg_size;
     struct ubx_gps_handle_s* _handle = (struct ubx_gps_handle_s*)ctx;
     const struct gps_msg *parsed_msg = msg;
 
@@ -472,6 +473,7 @@ static void ubx_ack_ack_handler(size_t msg_size, const void* msg, void* ctx)
 {
     (void)msg_size;
     struct ubx_gps_handle_s* _handle = (struct ubx_gps_handle_s*)ctx;
+    (void)_handle;
     const struct gps_msg *parsed_msg = msg;
     struct ubx_ack_ack_output_s *ack_ack = ubx_parse_ubx_ack_ack_output(parsed_msg->frame_buffer, parsed_msg->msg_len);
     if (ack_ack != NULL) {

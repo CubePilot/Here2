@@ -24,6 +24,9 @@ RUN_AFTER(INIT_END) {
 }
 
 static void ms5611_listener_task_func(size_t msg_size, const void* msg, void* ctx) {
+    (void)msg_size;
+    (void)ctx;
+
     struct ms5611_sample_s* sample = (struct ms5611_sample_s*)msg;
 
     struct uavcan_equipment_air_data_StaticTemperature_s temp;
