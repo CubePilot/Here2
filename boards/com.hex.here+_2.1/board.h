@@ -34,3 +34,6 @@
 
 #define HAL_USE_SERIAL TRUE
 #define SERIAL_BUFFERS_SIZE 32
+
+void boardInit(void);
+void board_gps_uart_init(void);

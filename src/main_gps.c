@@ -4,6 +4,7 @@
 #include <common/helpers.h>
 #include <modules/gps/gps.h>
 #include <modules/param/param.h>
+#include <modules/boot_msg/boot_msg.h>
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
@@ -145,6 +146,13 @@ struct ubx_msg_cfg_s ubx_cfg_list[] = {
 
 THD_WORKING_AREA(ubx_gps_thd_wa, 256);
 RUN_AFTER(INIT_END) {
+    // If we booted because I2C was connected, cancel GPS init
+    if (get_boot_msg_valid() && boot_msg.boot_msg.boot_reason == 127) {
+        return;
+    }
+
+    board_gps_uart_init();
+
     gps_init(&gps_handle);
     ubx_init(&ubx_handle, &GPS_SERIAL, &gps_default_sercfg);
     chThdCreateStatic(ubx_gps_thd_wa,
