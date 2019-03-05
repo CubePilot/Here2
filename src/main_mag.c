@@ -40,9 +40,9 @@ static void ak09916_task_func(struct worker_thread_timer_task_s* task) {
         }
         usleep(10000);
     } else if (ak09916_update(&ak09916)) {
-        mag.magnetic_field_ga[0] = ak09916.meas.x/1000.0f;
-        mag.magnetic_field_ga[1] = ak09916.meas.y/1000.0f;
-        mag.magnetic_field_ga[2] = ak09916.meas.z/1000.0f;
+        mag.magnetic_field_ga[0] = -ak09916.meas.y/1000.0f;
+        mag.magnetic_field_ga[1] = -ak09916.meas.x/1000.0f;
+        mag.magnetic_field_ga[2] = -ak09916.meas.z/1000.0f;
         mag.magnetic_field_covariance_len = 0;
         uavcan_broadcast(0, &uavcan_equipment_ahrs_MagneticFieldStrength_descriptor, CANARD_TRANSFER_PRIORITY_HIGH, &mag);
     }
