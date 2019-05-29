@@ -147,7 +147,7 @@ struct ubx_msg_cfg_s ubx_cfg_list[] = {
 THD_WORKING_AREA(ubx_gps_thd_wa, 256);
 RUN_AFTER(INIT_END) {
     // If we booted because I2C was connected, cancel GPS init
-    if (get_boot_msg_valid() && boot_msg.boot_msg.boot_reason == 127) {
+    if (get_boot_msg_valid() && boot_msg_id == SHARED_MSG_BOOT_INFO && boot_msg.boot_info_msg.boot_reason == 127) {
         return;
     }
 
