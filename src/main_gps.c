@@ -12,6 +12,7 @@
 #include <modules/pubsub/pubsub.h>
 #include <modules/worker_thread/worker_thread.h>
 #include <modules/uavcan_debug/uavcan_debug.h>
+#include <modules/can/can.h>
 #include <uavcan.equipment.gnss.Fix.h>
 #include <uavcan.equipment.gnss.Fix2.h>
 #include <uavcan.equipment.gnss.Auxiliary.h>
@@ -61,7 +62,6 @@ struct ubx_gps_handle_s {
     uint8_t cfg_msg_index;
     bool do_cfg;
     uint32_t last_baud_change_ms;
-    struct worker_thread_timer_task_s ubx_gps_init_task;
     struct worker_thread_listener_task_s gps_inject_listener_task;
     uint8_t total_msg_cfgs;
     struct {
@@ -143,24 +143,43 @@ struct ubx_msg_cfg_s ubx_cfg_list[] = {
     {UBX_NAV_PVT_CLASS_ID, UBX_NAV_PVT_MSG_ID, 1, &ubx_nav_pvt_topic, &ubx_nav_pvt_listener, ubx_nav_pvt_handler},
 };
 
+static struct worker_thread_timer_task_s init_task;
+
 
 THD_WORKING_AREA(ubx_gps_thd_wa, 256);
-RUN_AFTER(INIT_END) {
-    // If we booted because I2C was connected, cancel GPS init
+
+static void init_task_func(struct worker_thread_timer_task_s *task) {
     if (get_boot_msg_valid() && boot_msg_id == SHARED_MSG_BOOT_INFO && boot_msg.boot_info_msg.boot_reason == 127) {
         return;
     }
 
-    board_gps_uart_init();
+    bool have_received_can_msg = false;
 
-    gps_init(&gps_handle);
-    ubx_init(&ubx_handle, &GPS_SERIAL, &gps_default_sercfg);
-    chThdCreateStatic(ubx_gps_thd_wa,
-                        sizeof(ubx_gps_thd_wa),
-                        HIGHPRIO,               // Initial priority.
-                        ubx_gps_spinner,             // Thread function.
-                        NULL);              // Thread parameter.
-    worker_thread_add_timer_task(&WT, &ubx_handle.ubx_gps_init_task, ubx_gps_init_loop, &ubx_handle, LL_MS2ST(100), true);
+    struct can_instance_s* can_instance = NULL;
+    while (can_iterate_instances(&can_instance)) {
+        if (can_get_baudrate_confirmed(can_instance)) {
+            have_received_can_msg = true;
+        }
+    }
+
+    if (have_received_can_msg) {
+        board_gps_uart_init();
+
+        gps_init(&gps_handle);
+        ubx_init(&ubx_handle, &GPS_SERIAL, &gps_default_sercfg);
+        chThdCreateStatic(ubx_gps_thd_wa,
+                            sizeof(ubx_gps_thd_wa),
+                            HIGHPRIO,               // Initial priority.
+                            ubx_gps_spinner,             // Thread function.
+                            NULL);              // Thread parameter.
+        worker_thread_add_timer_task(&WT, &init_task, ubx_gps_init_loop, &ubx_handle, LL_MS2ST(100), false);
+    } else {
+        worker_thread_timer_task_reschedule(&WT, &init_task, LL_MS2ST(10));
+    }
+}
+
+RUN_AFTER(INIT_END) {
+    worker_thread_add_timer_task(&WT, &init_task, init_task_func, NULL, LL_MS2ST(10), false);
 }
 
 static void ubx_init(struct ubx_gps_handle_s *ubx_handle, SerialDriver* serial, SerialConfig *sercfg)
@@ -287,6 +306,8 @@ static void ubx_gps_init_loop(struct worker_thread_timer_task_s *task)
         ubx_gps_configure_msgs();
     }
     try_cnt++;
+
+    worker_thread_timer_task_reschedule(&WT, &init_task, LL_MS2ST(100));
 }
 
 //MSG Configure
