@@ -432,10 +432,17 @@ static void ubx_nav_pvt_handler(size_t msg_size, const void* msg, void* ctx)
             _handle->state.fix.longitude_deg_1e8 = (int64_t)nav_pvt->lon*10;
             _handle->state.fix.height_ellipsoid_mm = nav_pvt->height;
             _handle->state.fix.height_msl_mm = nav_pvt->hMSL;
+            _handle->state.fix2.latitude_deg_1e8 = (int64_t)nav_pvt->lat*10;
+            _handle->state.fix2.longitude_deg_1e8 = (int64_t)nav_pvt->lon*10;
+            _handle->state.fix2.height_ellipsoid_mm = nav_pvt->height;
+            _handle->state.fix2.height_msl_mm = nav_pvt->hMSL;
+            
             //Velocity
             _handle->state.fix.ned_velocity[0] = nav_pvt->velN/1e3f;
             _handle->state.fix.ned_velocity[1] = nav_pvt->velE/1e3f;
-            _handle->state.fix.ned_velocity[2] = nav_pvt->velD/1e3f;
+            _handle->state.fix.ned_velocity[2] = nav_pvt->velD/1e3f;            _handle->state.fix2.ned_velocity[0] = nav_pvt->velN/1e3f;
+            _handle->state.fix2.ned_velocity[1] = nav_pvt->velE/1e3f;
+            _handle->state.fix2.ned_velocity[2] = nav_pvt->velD/1e3f;
             //Heading of motion
             //_handle->state.fix.heading_of_motion =
             //uncertainties
@@ -445,33 +452,57 @@ static void ubx_nav_pvt_handler(size_t msg_size, const void* msg, void* ctx)
             _handle->state.fix.position_covariance[0] = SQ(((float)(nav_pvt->hAcc)/1e3f));
             _handle->state.fix.position_covariance[4] = SQ(((float)(nav_pvt->hAcc)/1e3f));
             _handle->state.fix.position_covariance[8] = SQ(((float)(nav_pvt->vAcc)/1e3f));
+            _handle->state.fix2.covariance_len = 6;
+            _handle->state.fix2.covariance[0] = SQ(((float)(nav_pvt->hAcc)/1e3f));
+            _handle->state.fix2.covariance[1] = SQ(((float)(nav_pvt->hAcc)/1e3f));
+            _handle->state.fix2.covariance[2] = SQ(((float)(nav_pvt->vAcc)/1e3f));
             //Velocity
             _handle->state.fix.velocity_covariance_len = 9;
             _handle->state.fix.velocity_covariance[0] = SQ(((float)(nav_pvt->sAcc)/1e3f));
             _handle->state.fix.velocity_covariance[4] = _handle->state.fix.velocity_covariance[0];
             _handle->state.fix.velocity_covariance[8] = _handle->state.fix.velocity_covariance[0];
+            _handle->state.fix2.covariance[3] = SQ(((float)(nav_pvt->sAcc)/1e3f));
+            _handle->state.fix2.covariance[4] = _handle->state.fix.velocity_covariance[0];
+            _handle->state.fix2.covariance[5] = _handle->state.fix.velocity_covariance[0];
             //Fix Mode
             switch(nav_pvt->fixType) {
                 case 2: //2D-fix
                     _handle->state.fix.status = UAVCAN_EQUIPMENT_GNSS_FIX_STATUS_2D_FIX;
+                    _handle->state.fix2.status = UAVCAN_EQUIPMENT_GNSS_FIX2_STATUS_2D_FIX;
                     break;
                 case 3: //3D-Fix
                 case 4: //GNSS + dead reckoning combined
                     _handle->state.fix.status = UAVCAN_EQUIPMENT_GNSS_FIX_STATUS_3D_FIX;
+                    _handle->state.fix2.status = UAVCAN_EQUIPMENT_GNSS_FIX2_STATUS_3D_FIX;
+                    if (nav_pvt->flags & 0b00000010) {
+                        _handle->state.fix2.mode = UAVCAN_EQUIPMENT_GNSS_FIX2_MODE_DGPS;
+                    }
+                    if (nav_pvt->flags & 0b01000000) {
+                        _handle->state.fix2.mode = UAVCAN_EQUIPMENT_GNSS_FIX2_MODE_RTK;
+                        _handle->state.fix2.sub_mode = UAVCAN_EQUIPMENT_GNSS_FIX2_SUB_MODE_RTK_FLOAT;
+                    }
+                    if (nav_pvt->flags & 0b10000000) {
+                        _handle->state.fix2.mode = UAVCAN_EQUIPMENT_GNSS_FIX2_MODE_RTK;
+                        _handle->state.fix2.sub_mode = UAVCAN_EQUIPMENT_GNSS_FIX2_SUB_MODE_RTK_FIXED;
+                    }
                     break;
                 case 5: //time only fix
                     _handle->state.fix.status = UAVCAN_EQUIPMENT_GNSS_FIX_STATUS_TIME_ONLY;
+                    _handle->state.fix2.status = UAVCAN_EQUIPMENT_GNSS_FIX2_STATUS_TIME_ONLY;
                     break;
                 case 0: //no fix
                 case 1: //dead reckoning only
                 default:
                     _handle->state.fix.status = UAVCAN_EQUIPMENT_GNSS_FIX_STATUS_NO_FIX;
+                    _handle->state.fix2.status = UAVCAN_EQUIPMENT_GNSS_FIX2_STATUS_NO_FIX;
                     break;
             }
 
             //Misc
             _handle->state.fix.sats_used = nav_pvt->numSV;
+            _handle->state.fix2.sats_used = nav_pvt->numSV;
             _handle->state.fix.pdop = nav_pvt->pDOP*0.01f;
+            _handle->state.fix2.pdop = nav_pvt->pDOP*0.01f;
             //Time
             if ((nav_pvt->valid & 0x01) && (nav_pvt->valid & 0x02)) { //Check if utc date and time valid
                 //create time
@@ -484,13 +515,18 @@ static void ubx_nav_pvt_handler(size_t msg_size, const void* msg, void* ctx)
                 std_tm.tm_sec = nav_pvt->sec;
                 std_tm.tm_isdst = 0;
                 _handle->state.fix.gnss_timestamp.usec = (nav_pvt->nano/1000 + (((int64_t)mktime(&std_tm))*1000000LL));
+                _handle->state.fix2.gnss_timestamp.usec = (nav_pvt->nano/1000 + (((int64_t)mktime(&std_tm))*1000000LL));
             } else {
                 _handle->state.fix.gnss_timestamp.usec = 0;
+                _handle->state.fix2.gnss_timestamp.usec = 0;
                 _handle->state.fix.status = UAVCAN_EQUIPMENT_GNSS_FIX_STATUS_NO_FIX;
+                _handle->state.fix2.status = UAVCAN_EQUIPMENT_GNSS_FIX2_STATUS_NO_FIX;
             }
             _handle->state.fix.gnss_time_standard = UAVCAN_EQUIPMENT_GNSS_FIX_GNSS_TIME_STANDARD_UTC;
+            _handle->state.fix2.gnss_time_standard = UAVCAN_EQUIPMENT_GNSS_FIX2_GNSS_TIME_STANDARD_UTC;
             //Publish Fix Packet over CAN
-            uavcan_broadcast(0, &uavcan_equipment_gnss_Fix_descriptor, CANARD_TRANSFER_PRIORITY_HIGH, &_handle->state.fix);
+            //uavcan_broadcast(0, &uavcan_equipment_gnss_Fix_descriptor, CANARD_TRANSFER_PRIORITY_HIGH, &_handle->state.fix);
+            uavcan_broadcast(0, &uavcan_equipment_gnss_Fix2_descriptor, CANARD_TRANSFER_PRIORITY_HIGH, &_handle->state.fix2);
         }
     } else {
         gps_debug("NAV-POSLLH", "BAD MSG");
