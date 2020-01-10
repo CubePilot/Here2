@@ -182,65 +182,65 @@ RUN_AFTER(INIT_END) {
     worker_thread_add_timer_task(&WT, &init_task, init_task_func, NULL, LL_MS2ST(10), false);
 }
 
-static void ubx_init(struct ubx_gps_handle_s *ubx_handle, SerialDriver* serial, SerialConfig *sercfg)
+static void ubx_init(struct ubx_gps_handle_s *handle, SerialDriver* serial, SerialConfig *sercfg)
 {
-    if (ubx_handle == NULL) {
+    if (handle == NULL) {
         return;
     }
-    memset(ubx_handle, 0, sizeof(struct ubx_gps_handle_s));
-    memcpy(&ubx_handle->sercfg, sercfg, sizeof(SerialConfig));
-    ubx_handle->serial = serial;
-    ubx_handle->last_baud_change_ms = millis();
-    sdStart(ubx_handle->serial, &ubx_handle->sercfg);
-    send_init_blob(ubx_handle->serial);
-    ubx_handle->total_msg_cfgs = sizeof(ubx_cfg_list)/sizeof(struct ubx_msg_cfg_s);
+    memset(handle, 0, sizeof(struct ubx_gps_handle_s));
+    memcpy(&handle->sercfg, sercfg, sizeof(SerialConfig));
+    handle->serial = serial;
+    handle->last_baud_change_ms = millis();
+    sdStart(handle->serial, &handle->sercfg);
+    send_init_blob(handle->serial);
+    handle->total_msg_cfgs = sizeof(ubx_cfg_list)/sizeof(struct ubx_msg_cfg_s);
     //Setup UBX message subscribers
     //NAV-SOL
     pubsub_init_topic(&ubx_nav_sol_topic, &UBX_MSG_TOPIC_GROUP);
     if (gps_ubx_init_msg_topic(&gps_handle, UBX_NAV_SOL_CLASS_ID, UBX_NAV_SOL_MSG_ID, parsed_msg_buffer, sizeof(parsed_msg_buffer), &ubx_nav_sol_topic)) {
-        worker_thread_add_listener_task(&WT, &ubx_nav_sol_listener, &ubx_nav_sol_topic, ubx_nav_sol_handler, ubx_handle);
+        worker_thread_add_listener_task(&WT, &ubx_nav_sol_listener, &ubx_nav_sol_topic, ubx_nav_sol_handler, handle);
         uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "Registered Topic for 0x%x 0x%x", UBX_NAV_SOL_CLASS_ID, UBX_NAV_SOL_MSG_ID);
     }
     //ACK-ACK
     pubsub_init_topic(&ubx_ack_ack_topic, &UBX_MSG_TOPIC_GROUP);
     if (gps_ubx_init_msg_topic(&gps_handle, UBX_ACK_ACK_CLASS_ID, UBX_ACK_ACK_MSG_ID, parsed_msg_buffer, sizeof(parsed_msg_buffer), &ubx_ack_ack_topic)) {
-        worker_thread_add_listener_task(&WT, &ubx_ack_ack_listener, &ubx_ack_ack_topic, ubx_ack_ack_handler, ubx_handle);
+        worker_thread_add_listener_task(&WT, &ubx_ack_ack_listener, &ubx_ack_ack_topic, ubx_ack_ack_handler, handle);
         uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "Registered Topic for 0x%x 0x%x", UBX_ACK_ACK_CLASS_ID, UBX_ACK_ACK_MSG_ID);
     }
 
     //CFG-RATE
     pubsub_init_topic(&ubx_cfg_rate_topic, &UBX_MSG_TOPIC_GROUP);
     if (gps_ubx_init_msg_topic(&gps_handle, UBX_CFG_RATE_CLASS_ID, UBX_CFG_RATE_MSG_ID, parsed_msg_buffer, sizeof(parsed_msg_buffer), &ubx_cfg_rate_topic)) {
-        worker_thread_add_listener_task(&WT, &ubx_cfg_rate_listener, &ubx_cfg_rate_topic, ubx_cfg_rate_handler, ubx_handle);
+        worker_thread_add_listener_task(&WT, &ubx_cfg_rate_listener, &ubx_cfg_rate_topic, ubx_cfg_rate_handler, handle);
         uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "Registered Topic for 0x%x 0x%x", UBX_CFG_RATE_CLASS_ID, UBX_CFG_RATE_MSG_ID);
     }
 
     //CFG-MSG
     pubsub_init_topic(&ubx_cfg_msg_topic, &UBX_MSG_TOPIC_GROUP);
     if (gps_ubx_init_msg_topic(&gps_handle, UBX_CFG_MSG_CLASS_ID, UBX_CFG_MSG_MSG_ID, parsed_msg_buffer, sizeof(parsed_msg_buffer), &ubx_cfg_msg_topic)) {
-        worker_thread_add_listener_task(&WT, &ubx_cfg_msg_listener, &ubx_cfg_msg_topic, ubx_cfg_msg_handler, ubx_handle);
+        worker_thread_add_listener_task(&WT, &ubx_cfg_msg_listener, &ubx_cfg_msg_topic, ubx_cfg_msg_handler, handle);
         uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "Registered Topic for 0x%x 0x%x", UBX_CFG_MSG_CLASS_ID, UBX_CFG_MSG_MSG_ID);
     }
 
     //CFG-NAV5
     pubsub_init_topic(&ubx_cfg_nav5_topic, &UBX_MSG_TOPIC_GROUP);
     if (gps_ubx_init_msg_topic(&gps_handle, UBX_CFG_NAV5_CLASS_ID, UBX_CFG_NAV5_MSG_ID, parsed_msg_buffer, sizeof(parsed_msg_buffer), &ubx_cfg_nav5_topic)) {
-        worker_thread_add_listener_task(&WT, &ubx_cfg_nav5_listener, &ubx_cfg_nav5_topic, ubx_cfg_nav5_handler, ubx_handle);
+        worker_thread_add_listener_task(&WT, &ubx_cfg_nav5_listener, &ubx_cfg_nav5_topic, ubx_cfg_nav5_handler, handle);
         uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "Registered Topic for 0x%x 0x%x", UBX_CFG_NAV5_CLASS_ID, UBX_CFG_NAV5_MSG_ID);
     }
 
     //Register Messages in the cfg list
-    for (uint8_t i = 0; i < ubx_handle->total_msg_cfgs; i++) {
+    for (uint8_t i = 0; i < handle->total_msg_cfgs; i++) {
         pubsub_init_topic(ubx_cfg_list[i].topic, &UBX_MSG_TOPIC_GROUP);
         if (gps_ubx_init_msg_topic(&gps_handle, ubx_cfg_list[i].class_id, ubx_cfg_list[i].msg_id, parsed_msg_buffer, sizeof(parsed_msg_buffer), ubx_cfg_list[i].topic)) {
-            worker_thread_add_listener_task(&WT, ubx_cfg_list[i].listener_task, ubx_cfg_list[i].topic, ubx_cfg_list[i].handler, ubx_handle);
+            worker_thread_add_listener_task(&WT, ubx_cfg_list[i].listener_task, ubx_cfg_list[i].topic, ubx_cfg_list[i].handler, handle);
             uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "Registered Topic for 0x%x 0x%x", ubx_cfg_list[i].class_id, ubx_cfg_list[i].msg_id);
         }
     }
 
     //Register Listener to GPS Inject Message
     struct pubsub_topic_s* gps_inject_topic = uavcan_get_message_topic(0, &uavcan_equipment_gnss_RTCMStream_descriptor);
-    worker_thread_add_listener_task(&WT, &ubx_handle->gps_inject_listener_task, gps_inject_topic, gps_inject_handler, &ubx_handle);
+    worker_thread_add_listener_task(&WT, &handle->gps_inject_listener_task, gps_inject_topic, gps_inject_handler, handle);
 }
 
 static void send_init_blob(SerialDriver* serial)
