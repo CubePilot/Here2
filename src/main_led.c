@@ -2,14 +2,14 @@
 #include "hal.h"
 #include <modules/timing/timing.h>
 #include <common/helpers.h>
-#include <modules/driver_profiLED/profiLED.h>
+#include <modules/driver_profiLED/driver_profiLED.h>
 #include <modules/worker_thread/worker_thread.h>
 #include <modules/uavcan_debug/uavcan_debug.h>
 #include <uavcan.equipment.indication.LightsCommand.h>
 #include <main_i2c_slave.h>
 #include <modules/param/param.h>
 
-static struct profiLED_instance_s profiled_instance;
+static struct spi_device_s led_spi;
 static uint32_t color_buf[4];
 
 PARAM_DEFINE_UINT8_PARAM_STATIC(led_mode, "LED_MODE", 1, 0, 2)
@@ -24,10 +24,16 @@ static void profiled_task_func(struct worker_thread_timer_task_s* task);
 static void led_command_handler(size_t msg_size, const void* buf, void* ctx);
 
 RUN_AFTER(INIT_END) {
-    profiLED_init(&profiled_instance, 3, BOARD_PAL_LINE_SPI3_PROFILED_CS, true, 4);
-    worker_thread_add_timer_task(&WT, &profiled_task, profiled_task_func, NULL, LL_MS2ST(1), true);
-    struct pubsub_topic_s* led_command_topic = uavcan_get_message_topic(0, &uavcan_equipment_indication_LightsCommand_descriptor);
-    worker_thread_add_listener_task(&WT, &led_command_task, led_command_topic, led_command_handler, NULL);
+    if (profiLED_spi_dev_init(&led_spi, 3, BOARD_PAL_LINE_SPI3_PROFILED_CS, true, 1000000)) {
+        worker_thread_add_timer_task(&WT, &profiled_task, profiled_task_func, NULL, LL_MS2ST(1), true);
+        struct pubsub_topic_s* led_command_topic = uavcan_get_message_topic(0, &uavcan_equipment_indication_LightsCommand_descriptor);
+        worker_thread_add_listener_task(&WT, &led_command_task, led_command_topic, led_command_handler, NULL);
+    }
+}
+
+static struct profiLED_color_s color_func(uint32_t led_idx, void* ctx) {
+    uint32_t* colors = (uint32_t*)ctx;
+    return profiLED_make_color_from_hex(colors[led_idx]);
 }
 
 static void profiled_task_func(struct worker_thread_timer_task_s* task) {
@@ -55,26 +61,28 @@ static void profiled_task_func(struct worker_thread_timer_task_s* task) {
             break;
     }
 
-    for (uint8_t i=0; i<4; i++) {
-        profiLED_set_color_hex(&profiled_instance, i, color_buf[i]);
-    }
+    uint32_t color_out[4];
+
+    memcpy(color_out, color_buf, sizeof(color_out));
 
     if (led_strobe) {
         if (count/50 == 2 || count/50 == 5) {
             for (uint8_t i=0; i<4; i++) {
-                profiLED_set_color_hex(&profiled_instance, i, 0xffffff);
+                color_out[i] = 0xffffff;
             }
         } else if (count/50 <= 7) {
             for (uint8_t i=0; i<4; i++) {
-                profiLED_set_color_hex(&profiled_instance, i, 0);
+                color_out[i] = 0;
             }
         }
     }
 
     count = (count+1) % 2000;
 
-    profiLED_update(&profiled_instance);
+    profiLED_output_spi(&led_spi, 4, color_func, color_out);
 }
+
+
 
 static void led_command_handler(size_t msg_size, const void* buf, void* ctx)
 {
