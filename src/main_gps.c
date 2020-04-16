@@ -440,7 +440,8 @@ static void ubx_nav_pvt_handler(size_t msg_size, const void* msg, void* ctx)
             //Velocity
             _handle->state.fix.ned_velocity[0] = nav_pvt->velN/1e3f;
             _handle->state.fix.ned_velocity[1] = nav_pvt->velE/1e3f;
-            _handle->state.fix.ned_velocity[2] = nav_pvt->velD/1e3f;            _handle->state.fix2.ned_velocity[0] = nav_pvt->velN/1e3f;
+            _handle->state.fix.ned_velocity[2] = nav_pvt->velD/1e3f;
+            _handle->state.fix2.ned_velocity[0] = nav_pvt->velN/1e3f;
             _handle->state.fix2.ned_velocity[1] = nav_pvt->velE/1e3f;
             _handle->state.fix2.ned_velocity[2] = nav_pvt->velD/1e3f;
             //Heading of motion
