@@ -3,6 +3,8 @@
 #include <stdint.h>
 #include <modules/platform_stm32f302x8/platform_stm32f302x8.h>
 
+#define DISABLE_AK09916_SCALING_FIX
+
 #define BOARD_CONFIG_HW_NAME "org.hex.here"
 #define BOARD_CONFIG_HW_MAJOR_VER 2
 #define BOARD_CONFIG_HW_MINOR_VER 1
