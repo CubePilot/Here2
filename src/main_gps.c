@@ -504,26 +504,19 @@ static void ubx_nav_pvt_handler(size_t msg_size, const void* msg, void* ctx)
             _handle->state.fix.pdop = nav_pvt->pDOP*0.01f;
             _handle->state.fix2.pdop = nav_pvt->pDOP*0.01f;
             //Time
+
             if ((nav_pvt->valid & 0x01) && (nav_pvt->valid & 0x02)) { //Check if utc date and time valid
-                //create time
-                struct tm std_tm;
-                std_tm.tm_year = (nav_pvt->year - 1900);
-                std_tm.tm_mon = (nav_pvt->month - 1);
-                std_tm.tm_mday = nav_pvt->day;
-                std_tm.tm_hour = nav_pvt->hour;
-                std_tm.tm_min = nav_pvt->min;
-                std_tm.tm_sec = nav_pvt->sec;
-                std_tm.tm_isdst = 0;
-                _handle->state.fix.gnss_timestamp.usec = (nav_pvt->nano/1000 + (((int64_t)mktime(&std_tm))*1000000LL));
-                _handle->state.fix2.gnss_timestamp.usec = (nav_pvt->nano/1000 + (((int64_t)mktime(&std_tm))*1000000LL));
+                _handle->state.fix.gnss_timestamp.usec = _handle->state.fix2.gnss_timestamp.usec = date_to_utc_stamp(nav_pvt->year, nav_pvt->month, nav_pvt->day, nav_pvt->hour, nav_pvt->min, nav_pvt->sec);
+
+                _handle->state.fix.gnss_time_standard = UAVCAN_EQUIPMENT_GNSS_FIX_GNSS_TIME_STANDARD_UTC;
+                _handle->state.fix2.gnss_time_standard = UAVCAN_EQUIPMENT_GNSS_FIX2_GNSS_TIME_STANDARD_UTC;
             } else {
                 _handle->state.fix.gnss_timestamp.usec = 0;
                 _handle->state.fix2.gnss_timestamp.usec = 0;
-                _handle->state.fix.status = UAVCAN_EQUIPMENT_GNSS_FIX_STATUS_NO_FIX;
-                _handle->state.fix2.status = UAVCAN_EQUIPMENT_GNSS_FIX2_STATUS_NO_FIX;
+                _handle->state.fix.gnss_time_standard = UAVCAN_EQUIPMENT_GNSS_FIX_GNSS_TIME_STANDARD_NONE;
+                _handle->state.fix2.gnss_time_standard = UAVCAN_EQUIPMENT_GNSS_FIX2_GNSS_TIME_STANDARD_NONE;
             }
-            _handle->state.fix.gnss_time_standard = UAVCAN_EQUIPMENT_GNSS_FIX_GNSS_TIME_STANDARD_UTC;
-            _handle->state.fix2.gnss_time_standard = UAVCAN_EQUIPMENT_GNSS_FIX2_GNSS_TIME_STANDARD_UTC;
+
             //Publish Fix Packet over CAN
             //uavcan_broadcast(0, &uavcan_equipment_gnss_Fix_descriptor, CANARD_TRANSFER_PRIORITY_HIGH, &_handle->state.fix);
             uavcan_broadcast(0, &uavcan_equipment_gnss_Fix2_descriptor, CANARD_TRANSFER_PRIORITY_HIGH, &_handle->state.fix2);
