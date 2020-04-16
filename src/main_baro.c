@@ -6,6 +6,8 @@
 #include <modules/timing/timing.h>
 #include <modules/param/param.h>
 
+#if BOARD_CONFIG_HW_MAJOR_VER != 3
+
 #define WT hpwork_thread
 WORKER_THREAD_DECLARE_EXTERN(WT)
 
@@ -44,3 +46,5 @@ static void ms5611_listener_task_func(size_t msg_size, const void* msg, void* ct
         uavcan_broadcast(0, &uavcan_equipment_air_data_StaticTemperature_descriptor, CANARD_TRANSFER_PRIORITY_HIGH, &temp);
     }
 }
+
+#endif
