@@ -2,7 +2,7 @@ CSRC = $(shell find src -name "*.c")
 INCDIR = ./include
 USE_OPT = -Os -g
 
-USE_PROCESS_STACKSIZE = 0x400
+USE_PROCESS_STACKSIZE = 1152
 USE_EXCEPTIONS_STACKSIZE = 256
 
 MODULES_ENABLED = \
@@ -33,7 +33,10 @@ spi_device \
 driver_ak09916 \
 driver_icm20x48 \
 driver_profiLED \
-driver_ms5611
+driver_ms5611 \
+stack_measurement \
+load_measurement \
+pubsub_miss_measurement
 
 MESSAGES_ENABLED = \
 uavcan.protocol.debug.LogMessage \
@@ -51,6 +54,8 @@ uavcan.equipment.indication.RGB565 \
 uavcan.equipment.air_data.StaticPressure \
 uavcan.equipment.air_data.StaticTemperature
 
+DSDL_NAMESPACE_DIRS += dsdl/com
+
 
 UBX_MESSAGES_ENABLED = \
 ACK-ACK \
@@ -66,6 +71,9 @@ CFG-NAV5 \
 MON-HW \
 MON-HW2 \
 MON-VER \
+MON-IO \
+MON-MSGPP \
+MON-RXBUF \
 NAV-SOL \
 NAV-SVINFO \
 NAV-STATUS \
@@ -73,7 +81,8 @@ NAV-POSLLH \
 NAV-VELNED \
 NAV-DOP \
 NAV-PVT \
-RXM-RAWX
-
+NAV-EOE \
+RXM-RAWX \
+RXM-RTCM
 
 include framework/include.mk

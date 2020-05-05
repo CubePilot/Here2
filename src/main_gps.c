@@ -2,6 +2,7 @@
 #include "hal.h"
 #include <modules/timing/timing.h>
 #include <common/helpers.h>
+#include <modules/can/can.h>
 #include <modules/gps/gps.h>
 #include <modules/param/param.h>
 #include <modules/boot_msg/boot_msg.h>
@@ -16,9 +17,9 @@
 #include <uavcan.equipment.gnss.Fix.h>
 #include <uavcan.equipment.gnss.Fix2.h>
 #include <uavcan.equipment.gnss.Auxiliary.h>
-#include <uavcan.equipment.gnss.RTCMStream.h>
 #include <ubx_msgs.h>
 #include <time.h>
+#include "rtcm_parser.h"
 
 #define WT lpwork_thread
 WORKER_THREAD_DECLARE_EXTERN(WT)
@@ -28,13 +29,22 @@ PUBSUB_TOPIC_GROUP_DECLARE_EXTERN(UBX_MSG_TOPIC_GROUP)
 
 PARAM_DEFINE_UINT8_PARAM_STATIC(nav5_dynModel, "dynModel", 8, 0, 10)
 
-//#define gps_debug(msg, fmt, args...) do {uavcan_send_debug_msg(LOG_LEVEL_DEBUG, msg, fmt,  __FUNCTION__, __LINE__, ## args); } while(0);
+// #define gps_debug(msg, fmt, args...) do {uavcan_send_debug_msg(LOG_LEVEL_DEBUG, msg, fmt, ## args); } while(0);
 #define gps_debug(msg, fmt, args...)
 
-#define GPS_CFG_BAUD 115200U
-static const uint32_t baudrates[] = {9600U, 115200U, 4800U, 19200U, 38400U, 57600U, 230400U};
-char init_blob[] = "\265\142\006\001\003\000\001\006\001\022\117$PUBX,41,1,0023,0001,115200,0*1C\r\n";
+#define GNSS_MEAS_RATE 200
 
+#define GPS_CFG_BAUD 230400U
+static const uint32_t baudrates[] = {9600U, 115200U, 4800U, 19200U, 38400U, 57600U, 230400U};
+char init_blob[] = "\265\142\006\001\003\000\001\006\001\022\117$PUBX,41,1,0023,0001,230400,0*1E\r\n";
+
+// #define GPS_CFG_BAUD 115200U
+// static const uint32_t baudrates[] = {9600U, 115200U, 4800U, 19200U, 38400U, 57600U, 230400U};
+// char init_blob[] = "\265\142\006\001\003\000\001\006\001\022\117$PUBX,41,1,0023,0001,115200,0*1C\r\n";
+
+// #define GPS_CFG_BAUD 57600U
+// static const uint32_t baudrates[] = {9600U, 115200U, 4800U, 19200U, 38400U, 57600U, 230400U};
+// char init_blob[] = "\265\142\006\001\003\000\001\006\001\022\117$PUBX,41,1,0023,0001,57600,0*2F\r\n";
 #define UBX_PORT_ID 1
 
 static SerialConfig gps_default_sercfg =
@@ -64,11 +74,9 @@ struct ubx_gps_handle_s {
     uint32_t last_baud_change_ms;
     struct worker_thread_listener_task_s gps_inject_listener_task;
     uint8_t total_msg_cfgs;
-    struct {
-        struct uavcan_equipment_gnss_Fix_s fix;
-        struct uavcan_equipment_gnss_Fix2_s fix2;
-        struct uavcan_equipment_gnss_Auxiliary_s aux;
-    } state;
+    uint32_t dop_iTOW;
+    uint32_t pvt_iTOW;
+    struct uavcan_equipment_gnss_Auxiliary_s aux_msg;
 } ubx_handle;
 
 struct ubx_msg_cfg_s {
@@ -80,6 +88,7 @@ struct ubx_msg_cfg_s {
     pubsub_message_handler_func_ptr handler;
 };
 
+// static struct rtcm_parser_s rtcm_parser;
 static struct gps_handle_s gps_handle;
 static void ubx_gps_spinner(void *ctx);
 static void ubx_init(struct ubx_gps_handle_s *ubx_handle, SerialDriver* serial, SerialConfig *sercfg);
@@ -96,6 +105,11 @@ enum ubx_cfg_steps {
 };
 
 //Msg topics and listeners
+//rxm-rtcm
+struct pubsub_topic_s ubx_rxm_rtcm_topic;
+struct worker_thread_listener_task_s ubx_rxm_rtcm_listener;
+static void ubx_rxm_rtcm_handler(size_t msg_size, const void* msg, void* ctx);
+
 //NAV-SOL
 struct pubsub_topic_s ubx_nav_sol_topic;
 struct worker_thread_listener_task_s ubx_nav_sol_listener;
@@ -120,27 +134,66 @@ static void ubx_cfg_msg_handler(size_t msg_size, const void* msg, void* ctx);
 struct pubsub_topic_s ubx_nav_svinfo_topic;
 struct worker_thread_listener_task_s ubx_nav_svinfo_listener;
 static void ubx_nav_svinfo_handler(size_t msg_size, const void* msg, void* ctx);
-//NAV-POSLLH
+
+//NAV-DOP
+struct pubsub_topic_s ubx_nav_dop_topic;
+struct worker_thread_listener_task_s ubx_nav_dop_listener;
+static void ubx_nav_dop_handler(size_t msg_size, const void* msg, void* ctx);
+
+// NAV-POSLLH
 //static void ubx_nav_posllh_handler(size_t msg_size, const void* msg, void* ctx);
-//NAV-VELNED
+// NAV-VELNED
 //static void ubx_nav_velned_handler(size_t msg_size, const void* msg, void* ctx);
-//NAV-PVT
+// NAV-PVT
 struct pubsub_topic_s ubx_nav_pvt_topic;
 struct worker_thread_listener_task_s ubx_nav_pvt_listener;
 static void ubx_nav_pvt_handler(size_t msg_size, const void* msg, void* ctx);
 //NAV-STATUS
 //static void ubx_nav_status_handler(size_t msg_size, const void* msg, void* ctx);
 
-//NAV-PVT
+// CFG-NAV5
 struct pubsub_topic_s ubx_cfg_nav5_topic;
 struct worker_thread_listener_task_s ubx_cfg_nav5_listener;
 static void ubx_cfg_nav5_handler(size_t msg_size, const void* msg, void* ctx);
 
+// NAV-EOE
+struct pubsub_topic_s ubx_nav_eoe_topic;
+struct worker_thread_listener_task_s ubx_nav_eoe_listener;
+static void ubx_nav_eoe_handler(size_t msg_size, const void* msg, void* ctx);
+
+// MON-VER
+struct pubsub_topic_s ubx_mon_ver_topic;
+struct worker_thread_listener_task_s ubx_mon_ver_listener;
+static void ubx_mon_ver_handler(size_t msg_size, const void* msg, void* ctx);
+
+// MON-IO
+struct pubsub_topic_s ubx_mon_io_topic;
+struct worker_thread_listener_task_s ubx_mon_io_listener;
+static void ubx_mon_io_handler(size_t msg_size, const void* msg, void* ctx);
+
+// MON-MSGPP
+struct pubsub_topic_s ubx_mon_msgpp_topic;
+struct worker_thread_listener_task_s ubx_mon_msgpp_listener;
+static void ubx_mon_msgpp_handler(size_t msg_size, const void* msg, void* ctx);
+
+// MON-RXBUF
+struct pubsub_topic_s ubx_mon_rxbuf_topic;
+struct worker_thread_listener_task_s ubx_mon_rxbuf_listener;
+static void ubx_mon_rxbuf_handler(size_t msg_size, const void* msg, void* ctx);
+
 static void gps_inject_handler(size_t msg_size, const void* buf, void* ctx);
 
 struct ubx_msg_cfg_s ubx_cfg_list[] = {
-    {UBX_NAV_SVINFO_CLASS_ID, UBX_NAV_SVINFO_MSG_ID, 4, &ubx_nav_svinfo_topic, &ubx_nav_svinfo_listener, ubx_nav_svinfo_handler},
+//     {UBX_NAV_SVINFO_CLASS_ID, UBX_NAV_SVINFO_MSG_ID, 4, &ubx_nav_svinfo_topic, &ubx_nav_svinfo_listener, ubx_nav_svinfo_handler},
     {UBX_NAV_PVT_CLASS_ID, UBX_NAV_PVT_MSG_ID, 1, &ubx_nav_pvt_topic, &ubx_nav_pvt_listener, ubx_nav_pvt_handler},
+    {UBX_NAV_EOE_CLASS_ID, UBX_NAV_EOE_MSG_ID, 1, &ubx_nav_eoe_topic, &ubx_nav_eoe_listener, ubx_nav_eoe_handler},
+    {UBX_NAV_DOP_CLASS_ID, UBX_NAV_DOP_MSG_ID, 5, &ubx_nav_dop_topic, &ubx_nav_dop_listener, ubx_nav_dop_handler},
+
+    // IO debug messages
+//     {UBX_RXM_RTCM_CLASS_ID, UBX_RXM_RTCM_MSG_ID, 1, &ubx_rxm_rtcm_topic, &ubx_rxm_rtcm_listener, ubx_rxm_rtcm_handler},
+//     {UBX_MON_IO_CLASS_ID, UBX_MON_IO_MSG_ID, 1, &ubx_mon_io_topic, &ubx_mon_io_listener, ubx_mon_io_handler},
+//     {UBX_MON_MSGPP_CLASS_ID, UBX_MON_MSGPP_MSG_ID, 1, &ubx_mon_msgpp_topic, &ubx_mon_msgpp_listener, ubx_mon_msgpp_handler},
+//     {UBX_MON_RXBUF_CLASS_ID, UBX_MON_RXBUF_MSG_ID, 1, &ubx_mon_rxbuf_topic, &ubx_mon_rxbuf_listener, ubx_mon_rxbuf_handler},
 };
 
 static struct worker_thread_timer_task_s init_task;
@@ -178,7 +231,13 @@ static void init_task_func(struct worker_thread_timer_task_s *task) {
     }
 }
 
+// static void rtcm_frame_cb(size_t frame_len, uint8_t* frame, void* ctx) {
+//     uint16_t type = ((uint16_t)frame[3]<<8 | frame[4]) >> 4;
+//     uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "parse %u", (unsigned)type);
+// }
+
 RUN_AFTER(INIT_END) {
+//     rtcm_parser_init(&rtcm_parser, rtcm_frame_cb, NULL);
     worker_thread_add_timer_task(&WT, &init_task, init_task_func, NULL, LL_MS2ST(10), false);
 }
 
@@ -229,6 +288,13 @@ static void ubx_init(struct ubx_gps_handle_s *handle, SerialDriver* serial, Seri
         uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "Registered Topic for 0x%x 0x%x", UBX_CFG_NAV5_CLASS_ID, UBX_CFG_NAV5_MSG_ID);
     }
 
+    //MON-VER
+    pubsub_init_topic(&ubx_mon_ver_topic, &UBX_MSG_TOPIC_GROUP);
+    if (gps_ubx_init_msg_topic(&gps_handle, UBX_MON_VER_CLASS_ID, UBX_MON_VER_MSG_ID, parsed_msg_buffer, sizeof(parsed_msg_buffer), &ubx_mon_ver_topic)) {
+        worker_thread_add_listener_task(&WT, &ubx_mon_ver_listener, &ubx_mon_ver_topic, ubx_mon_ver_handler, handle);
+        uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "Registered Topic for 0x%x 0x%x", UBX_MON_VER_CLASS_ID, UBX_MON_VER_MSG_ID);
+    }
+
     //Register Messages in the cfg list
     for (uint8_t i = 0; i < handle->total_msg_cfgs; i++) {
         pubsub_init_topic(ubx_cfg_list[i].topic, &UBX_MSG_TOPIC_GROUP);
@@ -239,7 +305,9 @@ static void ubx_init(struct ubx_gps_handle_s *handle, SerialDriver* serial, Seri
     }
 
     //Register Listener to GPS Inject Message
-    struct pubsub_topic_s* gps_inject_topic = uavcan_get_message_topic(0, &uavcan_equipment_gnss_RTCMStream_descriptor);
+#define UAVCAN_EQUIPMENT_GNSS_RTCM_STREAM_DTID 1062
+    can_add_filter(can_get_instance(0), 0x60FFFF80, 0x20000000 | ((uint32_t)UAVCAN_EQUIPMENT_GNSS_RTCM_STREAM_DTID<<8));
+    struct pubsub_topic_s* gps_inject_topic = can_get_rx_topic(can_get_instance(0));
     worker_thread_add_listener_task(&WT, &handle->gps_inject_listener_task, gps_inject_topic, gps_inject_handler, handle);
 }
 
@@ -318,7 +386,7 @@ static void ubx_gps_configure_msgs()
         case STEP_CFG_RATE: { //CFG_RATE
             if (ubx_handle.do_cfg) {
                 struct ubx_cfg_rate_getset_s cfg_rate = {};
-                cfg_rate.measRate = 200;
+                cfg_rate.measRate = GNSS_MEAS_RATE;
                 cfg_rate.navRate = 1;
                 cfg_rate.timeRef = 0;
                 send_message(UBX_CFG_RATE_CLASS_ID, UBX_CFG_RATE_MSG_ID, (uint8_t*)&cfg_rate, sizeof(cfg_rate));
@@ -415,6 +483,47 @@ static void ubx_nav_svinfo_handler(size_t msg_size, const void* msg, void* ctx)
     }
 }
 
+//NAV-EOE
+static void ubx_nav_eoe_handler(size_t msg_size, const void* msg, void* ctx)
+{
+    (void)msg_size;
+    (void)ctx;
+    struct ubx_gps_handle_s* _handle = (struct ubx_gps_handle_s*)ctx;
+    const struct gps_msg *parsed_msg = msg;
+    struct ubx_nav_eoe_periodic_s *nav_eoe = ubx_parse_ubx_nav_eoe_periodic(parsed_msg->frame_buffer, parsed_msg->msg_len);
+
+    if (nav_eoe != NULL) {
+        if (_handle->configured && nav_eoe->iTOW == _handle->dop_iTOW && _handle->dop_iTOW == _handle->pvt_iTOW) {
+            uavcan_broadcast(0, &uavcan_equipment_gnss_Auxiliary_descriptor, CANARD_TRANSFER_PRIORITY_MEDIUM, &_handle->aux_msg);
+        }
+    } else {
+        gps_debug("NAV-EOE", "BAD MSG");
+    }
+}
+
+//NAV-DOP
+static void ubx_nav_dop_handler(size_t msg_size, const void* msg, void* ctx)
+{
+    (void)msg_size;
+    (void)ctx;
+    struct ubx_gps_handle_s* _handle = (struct ubx_gps_handle_s*)ctx;
+    const struct gps_msg *parsed_msg = msg;
+    struct ubx_nav_dop_periodicpolled_s *nav_dop = ubx_parse_ubx_nav_dop_periodicpolled(parsed_msg->frame_buffer, parsed_msg->msg_len);
+
+    if (nav_dop != NULL) {
+        _handle->dop_iTOW = nav_dop->iTOW;
+        _handle->aux_msg.gdop = nav_dop->gDOP*0.01;
+        _handle->aux_msg.pdop = nav_dop->pDOP*0.01;
+        _handle->aux_msg.hdop = nav_dop->hDOP*0.01;
+        _handle->aux_msg.vdop = nav_dop->vDOP*0.01;
+        _handle->aux_msg.tdop = nav_dop->tDOP*0.01;
+        _handle->aux_msg.ndop = nav_dop->nDOP*0.01;
+        _handle->aux_msg.edop = nav_dop->eDOP*0.01;
+    } else {
+        gps_debug("NAV-DOP", "BAD MSG");
+    }
+}
+
 //NAV-PVT
 static void ubx_nav_pvt_handler(size_t msg_size, const void* msg, void* ctx)
 {
@@ -426,104 +535,146 @@ static void ubx_nav_pvt_handler(size_t msg_size, const void* msg, void* ctx)
     if (nav_pvt != NULL) {
         gps_debug("NAV-PVT", "Time: %d lon: %d lat: %d height: %d", nav_pvt->iTOW, nav_pvt->lon, nav_pvt->lat, nav_pvt->height);
         if (_handle->configured) {
-            //set state
+            struct uavcan_equipment_gnss_Fix2_s fix2;
+            memset(&fix2, 0, sizeof(fix2));
             //Position
-            _handle->state.fix.latitude_deg_1e8 = (int64_t)nav_pvt->lat*10;
-            _handle->state.fix.longitude_deg_1e8 = (int64_t)nav_pvt->lon*10;
-            _handle->state.fix.height_ellipsoid_mm = nav_pvt->height;
-            _handle->state.fix.height_msl_mm = nav_pvt->hMSL;
-            _handle->state.fix2.latitude_deg_1e8 = (int64_t)nav_pvt->lat*10;
-            _handle->state.fix2.longitude_deg_1e8 = (int64_t)nav_pvt->lon*10;
-            _handle->state.fix2.height_ellipsoid_mm = nav_pvt->height;
-            _handle->state.fix2.height_msl_mm = nav_pvt->hMSL;
+            fix2.latitude_deg_1e8 = (int64_t)nav_pvt->lat*10;
+            fix2.longitude_deg_1e8 = (int64_t)nav_pvt->lon*10;
+            fix2.height_ellipsoid_mm = nav_pvt->height;
+            fix2.height_msl_mm = nav_pvt->hMSL;
             
             //Velocity
-            _handle->state.fix.ned_velocity[0] = nav_pvt->velN/1e3f;
-            _handle->state.fix.ned_velocity[1] = nav_pvt->velE/1e3f;
-            _handle->state.fix.ned_velocity[2] = nav_pvt->velD/1e3f;
-            _handle->state.fix2.ned_velocity[0] = nav_pvt->velN/1e3f;
-            _handle->state.fix2.ned_velocity[1] = nav_pvt->velE/1e3f;
-            _handle->state.fix2.ned_velocity[2] = nav_pvt->velD/1e3f;
+            fix2.ned_velocity[0] = nav_pvt->velN/1e3f;
+            fix2.ned_velocity[1] = nav_pvt->velE/1e3f;
+            fix2.ned_velocity[2] = nav_pvt->velD/1e3f;
             //Heading of motion
             //_handle->state.fix.heading_of_motion =
             //uncertainties
             //Position
             //uavcan_send_debug_msg(LOG_LEVEL_DEBUG, "NAV-PVT" ,"%d %d", nav_pvt->hAcc, nav_pvt->vAcc);
-            _handle->state.fix.position_covariance_len = 9;
-            _handle->state.fix.position_covariance[0] = SQ(((float)(nav_pvt->hAcc)/1e3f));
-            _handle->state.fix.position_covariance[4] = SQ(((float)(nav_pvt->hAcc)/1e3f));
-            _handle->state.fix.position_covariance[8] = SQ(((float)(nav_pvt->vAcc)/1e3f));
-            _handle->state.fix2.covariance_len = 6;
-            _handle->state.fix2.covariance[0] = SQ(((float)(nav_pvt->hAcc)/1e3f));
-            _handle->state.fix2.covariance[1] = SQ(((float)(nav_pvt->hAcc)/1e3f));
-            _handle->state.fix2.covariance[2] = SQ(((float)(nav_pvt->vAcc)/1e3f));
+            fix2.covariance_len = 6;
+            fix2.covariance[0] = SQ(((float)(nav_pvt->hAcc)/1e3f));
+            fix2.covariance[1] = SQ(((float)(nav_pvt->hAcc)/1e3f));
+            fix2.covariance[2] = SQ(((float)(nav_pvt->vAcc)/1e3f));
             //Velocity
-            _handle->state.fix.velocity_covariance_len = 9;
-            _handle->state.fix.velocity_covariance[0] = SQ(((float)(nav_pvt->sAcc)/1e3f));
-            _handle->state.fix.velocity_covariance[4] = _handle->state.fix.velocity_covariance[0];
-            _handle->state.fix.velocity_covariance[8] = _handle->state.fix.velocity_covariance[0];
-            _handle->state.fix2.covariance[3] = SQ(((float)(nav_pvt->sAcc)/1e3f));
-            _handle->state.fix2.covariance[4] = _handle->state.fix.velocity_covariance[0];
-            _handle->state.fix2.covariance[5] = _handle->state.fix.velocity_covariance[0];
+            fix2.covariance[3] = SQ(((float)(nav_pvt->sAcc)/1e3f));
+            fix2.covariance[4] = fix2.covariance[3];
+            fix2.covariance[5] = fix2.covariance[3];
             //Fix Mode
             switch(nav_pvt->fixType) {
                 case 2: //2D-fix
-                    _handle->state.fix.status = UAVCAN_EQUIPMENT_GNSS_FIX_STATUS_2D_FIX;
-                    _handle->state.fix2.status = UAVCAN_EQUIPMENT_GNSS_FIX2_STATUS_2D_FIX;
+                    fix2.status = UAVCAN_EQUIPMENT_GNSS_FIX2_STATUS_2D_FIX;
                     break;
                 case 3: //3D-Fix
                 case 4: //GNSS + dead reckoning combined
-                    _handle->state.fix.status = UAVCAN_EQUIPMENT_GNSS_FIX_STATUS_3D_FIX;
-                    _handle->state.fix2.status = UAVCAN_EQUIPMENT_GNSS_FIX2_STATUS_3D_FIX;
+                    fix2.status = UAVCAN_EQUIPMENT_GNSS_FIX2_STATUS_3D_FIX;
                     if (nav_pvt->flags & 0b00000010) {
-                        _handle->state.fix2.mode = UAVCAN_EQUIPMENT_GNSS_FIX2_MODE_DGPS;
+                        fix2.mode = UAVCAN_EQUIPMENT_GNSS_FIX2_MODE_DGPS;
                     }
                     if (nav_pvt->flags & 0b01000000) {
-                        _handle->state.fix2.mode = UAVCAN_EQUIPMENT_GNSS_FIX2_MODE_RTK;
-                        _handle->state.fix2.sub_mode = UAVCAN_EQUIPMENT_GNSS_FIX2_SUB_MODE_RTK_FLOAT;
+                        fix2.mode = UAVCAN_EQUIPMENT_GNSS_FIX2_MODE_RTK;
+                        fix2.sub_mode = UAVCAN_EQUIPMENT_GNSS_FIX2_SUB_MODE_RTK_FLOAT;
                     }
                     if (nav_pvt->flags & 0b10000000) {
-                        _handle->state.fix2.mode = UAVCAN_EQUIPMENT_GNSS_FIX2_MODE_RTK;
-                        _handle->state.fix2.sub_mode = UAVCAN_EQUIPMENT_GNSS_FIX2_SUB_MODE_RTK_FIXED;
+                        fix2.mode = UAVCAN_EQUIPMENT_GNSS_FIX2_MODE_RTK;
+                        fix2.sub_mode = UAVCAN_EQUIPMENT_GNSS_FIX2_SUB_MODE_RTK_FIXED;
                     }
                     break;
                 case 5: //time only fix
-                    _handle->state.fix.status = UAVCAN_EQUIPMENT_GNSS_FIX_STATUS_TIME_ONLY;
-                    _handle->state.fix2.status = UAVCAN_EQUIPMENT_GNSS_FIX2_STATUS_TIME_ONLY;
+                    fix2.status = UAVCAN_EQUIPMENT_GNSS_FIX2_STATUS_TIME_ONLY;
                     break;
                 case 0: //no fix
                 case 1: //dead reckoning only
                 default:
-                    _handle->state.fix.status = UAVCAN_EQUIPMENT_GNSS_FIX_STATUS_NO_FIX;
-                    _handle->state.fix2.status = UAVCAN_EQUIPMENT_GNSS_FIX2_STATUS_NO_FIX;
+                    fix2.status = UAVCAN_EQUIPMENT_GNSS_FIX2_STATUS_NO_FIX;
                     break;
             }
 
             //Misc
-            _handle->state.fix.sats_used = nav_pvt->numSV;
-            _handle->state.fix2.sats_used = nav_pvt->numSV;
-            _handle->state.fix.pdop = nav_pvt->pDOP*0.01f;
-            _handle->state.fix2.pdop = nav_pvt->pDOP*0.01f;
+            fix2.sats_used = nav_pvt->numSV;
+            fix2.pdop = nav_pvt->pDOP*0.01f;
+
             //Time
-
             if ((nav_pvt->valid & 0x01) && (nav_pvt->valid & 0x02)) { //Check if utc date and time valid
-                _handle->state.fix.gnss_timestamp.usec = _handle->state.fix2.gnss_timestamp.usec = date_to_utc_stamp(nav_pvt->year, nav_pvt->month, nav_pvt->day, nav_pvt->hour, nav_pvt->min, nav_pvt->sec);
+                fix2.gnss_timestamp.usec = date_to_utc_stamp(nav_pvt->year, nav_pvt->month, nav_pvt->day, nav_pvt->hour, nav_pvt->min, nav_pvt->sec);
 
-                _handle->state.fix.gnss_time_standard = UAVCAN_EQUIPMENT_GNSS_FIX_GNSS_TIME_STANDARD_UTC;
-                _handle->state.fix2.gnss_time_standard = UAVCAN_EQUIPMENT_GNSS_FIX2_GNSS_TIME_STANDARD_UTC;
+                fix2.gnss_time_standard = UAVCAN_EQUIPMENT_GNSS_FIX2_GNSS_TIME_STANDARD_UTC;
             } else {
-                _handle->state.fix.gnss_timestamp.usec = 0;
-                _handle->state.fix2.gnss_timestamp.usec = 0;
-                _handle->state.fix.gnss_time_standard = UAVCAN_EQUIPMENT_GNSS_FIX_GNSS_TIME_STANDARD_NONE;
-                _handle->state.fix2.gnss_time_standard = UAVCAN_EQUIPMENT_GNSS_FIX2_GNSS_TIME_STANDARD_NONE;
+                fix2.gnss_timestamp.usec = 0;
+                fix2.gnss_time_standard = UAVCAN_EQUIPMENT_GNSS_FIX2_GNSS_TIME_STANDARD_NONE;
             }
 
             //Publish Fix Packet over CAN
-            //uavcan_broadcast(0, &uavcan_equipment_gnss_Fix_descriptor, CANARD_TRANSFER_PRIORITY_HIGH, &_handle->state.fix);
-            uavcan_broadcast(0, &uavcan_equipment_gnss_Fix2_descriptor, CANARD_TRANSFER_PRIORITY_HIGH, &_handle->state.fix2);
+            uavcan_broadcast(0, &uavcan_equipment_gnss_Fix2_descriptor, CANARD_TRANSFER_PRIORITY_HIGH, &fix2);
         }
+
+        // Aux message stuff
+        _handle->pvt_iTOW = nav_pvt->iTOW;
+        _handle->aux_msg.sats_visible = _handle->aux_msg.sats_used = nav_pvt->numSV;
     } else {
         gps_debug("NAV-POSLLH", "BAD MSG");
+    }
+}
+
+//MON-VER
+static void ubx_mon_ver_handler(size_t msg_size, const void* msg, void* ctx)
+{
+    (void)msg_size;
+    struct ubx_gps_handle_s* _handle = (struct ubx_gps_handle_s*)ctx;
+    (void)_handle;
+    const struct gps_msg *parsed_msg = msg;
+    struct ubx_mon_ver_polled_s *mon_ver = ubx_parse_ubx_mon_ver_polled(parsed_msg->frame_buffer, parsed_msg->msg_len);
+    if (mon_ver != NULL) {
+
+    } else {
+        gps_debug("MON-VER", "BAD MSG");
+    }
+}
+
+//MON-IO
+static void ubx_mon_io_handler(size_t msg_size, const void* msg, void* ctx)
+{
+    (void)msg_size;
+    struct ubx_gps_handle_s* _handle = (struct ubx_gps_handle_s*)ctx;
+    (void)_handle;
+    const struct gps_msg *parsed_msg = msg;
+    uint8_t n_repeat;
+    struct ubx_mon_io_periodicpolled_rep_s *mon_io = ubx_parse_ubx_mon_io_periodicpolled_rep(parsed_msg->frame_buffer, parsed_msg->msg_len, &n_repeat);
+    if (mon_io != NULL) {
+//         uavcan_send_debug_msg(LOG_LEVEL_DEBUG, "io", "%u %u %u %u %u", (unsigned)mon_io[1].rxBytes, (unsigned)mon_io[1].parityErrs, (unsigned)mon_io[1].framingErrs, (unsigned)mon_io[1].overrunErrs, (unsigned)mon_io[1].breakCond);
+    } else {
+        gps_debug("MON-VER", "BAD MSG");
+    }
+}
+
+//MON-MSGPP
+static void ubx_mon_msgpp_handler(size_t msg_size, const void* msg, void* ctx)
+{
+    (void)msg_size;
+    struct ubx_gps_handle_s* _handle = (struct ubx_gps_handle_s*)ctx;
+    (void)_handle;
+    const struct gps_msg *parsed_msg = msg;
+    struct ubx_mon_msgpp_periodicpolled_s *mon_msgpp = ubx_parse_ubx_mon_msgpp_periodicpolled(parsed_msg->frame_buffer, parsed_msg->msg_len);
+    if (mon_msgpp != NULL) {
+//         uavcan_send_debug_msg(LOG_LEVEL_DEBUG, "msgpp", "%u", (unsigned)mon_msgpp->skipped[1]);
+//         uavcan_send_debug_msg(LOG_LEVEL_DEBUG, "cand", "%u", (unsigned)can_rx_frame_drops);
+    } else {
+        gps_debug("MON-VER", "BAD MSG");
+    }
+}
+
+//MON-RXBUF
+static void ubx_mon_rxbuf_handler(size_t msg_size, const void* msg, void* ctx)
+{
+    (void)msg_size;
+    struct ubx_gps_handle_s* _handle = (struct ubx_gps_handle_s*)ctx;
+    (void)_handle;
+    const struct gps_msg *parsed_msg = msg;
+    struct ubx_mon_rxbuf_periodicpolled_s *mon_rxbuf = ubx_parse_ubx_mon_rxbuf_periodicpolled(parsed_msg->frame_buffer, parsed_msg->msg_len);
+    if (mon_rxbuf != NULL) {
+//         uavcan_send_debug_msg(LOG_LEVEL_DEBUG, "rxbuf", "%u %u %u", (unsigned)mon_rxbuf->pending[1], (unsigned)mon_rxbuf->usage[1], (unsigned)mon_rxbuf->peakUsage[1]);
+    } else {
+        gps_debug("MON-VER", "BAD MSG");
     }
 }
 
@@ -539,6 +690,20 @@ static void ubx_ack_ack_handler(size_t msg_size, const void* msg, void* ctx)
         gps_debug("ACK-ACK", "CFG Ack %d %d", _handle->cfg_step, _handle->cfg_msg_index);
     } else {
         gps_debug("ACK-ACK", "BAD MSG");
+    }
+}
+
+//RXM-RTCM
+static void ubx_rxm_rtcm_handler(size_t msg_size, const void* msg, void* ctx)
+{
+    (void)msg_size;
+    struct ubx_gps_handle_s* _handle = (struct ubx_gps_handle_s*)ctx;
+    const struct gps_msg *parsed_msg = msg;
+    struct ubx_rxm_rtcm_output_s *rxm_rtcm = ubx_parse_ubx_rxm_rtcm_output(parsed_msg->frame_buffer, parsed_msg->msg_len);
+    if (rxm_rtcm != NULL) {
+//         uavcan_send_debug_msg(LOG_LEVEL_DEBUG, "rtcm", "%u %u", (unsigned)rxm_rtcm->msgType, (unsigned)rxm_rtcm->flags);
+    } else {
+        gps_debug("RXM-RTCM", "BAD MSG");
     }
 }
 
@@ -577,7 +742,7 @@ static void ubx_cfg_rate_handler(size_t msg_size, const void* msg, void* ctx)
     const struct gps_msg *parsed_msg = msg;
     struct ubx_cfg_rate_getset_s *cfg_rate = ubx_parse_ubx_cfg_rate_getset(parsed_msg->frame_buffer, parsed_msg->msg_len);
     if (cfg_rate != NULL) {
-        if (cfg_rate->measRate == 200 && cfg_rate->navRate == 1 && cfg_rate->timeRef == 0) {
+        if (cfg_rate->measRate == GNSS_MEAS_RATE && cfg_rate->navRate == 1 && cfg_rate->timeRef == 0) {
             if (_handle->cfg_step == STEP_CFG_RATE) {
                 _handle->cfg_step++;
             }
@@ -596,9 +761,42 @@ static void gps_inject_handler(size_t msg_size, const void* buf, void* ctx)
 {
     (void)msg_size;
     struct ubx_gps_handle_s *ubx_instance = (struct ubx_gps_handle_s*)ctx;
-    const struct uavcan_deserialized_message_s* msg_wrapper = buf;
-    const struct uavcan_equipment_gnss_RTCMStream_s* msg = (const struct uavcan_equipment_gnss_RTCMStream_s*)msg_wrapper->msg;
+    const struct can_rx_frame_s* frame = buf;
 
-    sdWrite(ubx_instance->serial, (const uint8_t*)msg->data, msg->data_len);
+    const uint32_t dtid = 1062;
+
+    if (frame->content.RTR || !frame->content.IDE || frame->content.DLC < 2) {
+        return;
+    }
+
+    if (((frame->content.EID>>7)&1) != 0) {
+        return;
+    }
+
+    if (((frame->content.EID>>8)&0xffff) != dtid) {
+        return;
+    }
+
+    uint8_t tail_byte = frame->content.data[frame->content.DLC-1];
+    bool eot = (tail_byte>>6)&1;
+    bool sot = (tail_byte>>7)&1;
+
+    // if start of transfer and not end of transfer, this is the start of a multi frame transfer and we have to skip the crc
+    uint8_t start_idx = (sot && !eot) ? 2 : 0;
+    if (sot) {
+        start_idx += 1;
+    }
+    sdWrite(ubx_instance->serial, &frame->content.data[start_idx], frame->content.DLC-1-start_idx);
+
+//     // Loopback test code
+//     struct can_tx_frame_s* tx_frame = can_allocate_tx_frames(can_get_instance(0), 1);
+//
+//     tx_frame->content = frame->content;
+//     tx_frame->content.EID &= ~0x7F;
+//     tx_frame->content.EID |= 7;
+//     can_enqueue_tx_frames(can_get_instance(0), &tx_frame, TIME_INFINITE, NULL, CAN_FRAME_ORIGIN_LOCAL);
+//
+//     for (size_t i=start_idx; i < frame->content.DLC-1; i++) {
+//         rtcm_parser_push_byte(&rtcm_parser, frame->content.data[i]);
+//     }
 }
-

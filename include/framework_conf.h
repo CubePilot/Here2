@@ -15,6 +15,7 @@
 #define PIN_CHANGE_PUBLISHER_WORKER_THREAD              lpwork_thread
 #define STACK_MEASUREMENT_WORKER_THREAD                 lpwork_thread
 #define LOAD_MEASUREMENT_WORKER_THREAD                  lpwork_thread
+#define PUBSUB_MISS_MEASUREMENT_WORKER_THREAD           lpwork_thread
 
 #define CAN_TRX_WORKER_THREAD                           can_thread
 #define CAN_EXPIRE_WORKER_THREAD                        can_thread

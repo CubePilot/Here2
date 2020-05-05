@@ -8,6 +8,7 @@
 #include <uavcan.equipment.indication.LightsCommand.h>
 #include <main_i2c_slave.h>
 #include <modules/param/param.h>
+#include <string.h>
 
 static struct spi_device_s led_spi;
 static uint32_t color_buf[4];
