@@ -596,7 +596,7 @@ static void ubx_nav_pvt_handler(size_t msg_size, const void* msg, void* ctx)
 
             //Time
             if ((nav_pvt->valid & 0x01) && (nav_pvt->valid & 0x02)) { //Check if utc date and time valid
-                fix2.gnss_timestamp.usec = date_to_utc_stamp(nav_pvt->year, nav_pvt->month, nav_pvt->day, nav_pvt->hour, nav_pvt->min, nav_pvt->sec);
+                fix2.gnss_timestamp.usec = (uint64_t)date_to_utc_stamp(nav_pvt->year, nav_pvt->month, nav_pvt->day, nav_pvt->hour, nav_pvt->min, nav_pvt->sec) * 1000000 + nav_pvt->nano/1000;
 
                 fix2.gnss_time_standard = UAVCAN_EQUIPMENT_GNSS_FIX2_GNSS_TIME_STANDARD_UTC;
             } else {
