@@ -27,16 +27,17 @@ uavcan_beginfirmwareupdate_server \
 uavcan_allocatee \
 uavcan_restart \
 uavcan_param_interface \
-freemem_check \
 gps \
 spi_device \
 driver_ak09916 \
 driver_icm20x48 \
 driver_profiLED \
-driver_ms5611 \
-stack_measurement \
-load_measurement \
-pubsub_miss_measurement
+driver_ms5611 
+
+#freemem_check \
+#stack_measurement \
+#load_measurement \
+#pubsub_miss_measurement
 
 MESSAGES_ENABLED = \
 uavcan.protocol.debug.LogMessage \
@@ -53,9 +54,6 @@ uavcan.equipment.indication.SingleLightCommand \
 uavcan.equipment.indication.RGB565 \
 uavcan.equipment.air_data.StaticPressure \
 uavcan.equipment.air_data.StaticTemperature
-
-DSDL_NAMESPACE_DIRS += dsdl/com
-
 
 UBX_MESSAGES_ENABLED = \
 ACK-ACK \

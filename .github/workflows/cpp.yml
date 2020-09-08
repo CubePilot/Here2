@@ -1,0 +1,23 @@
+name: C/C++ CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+
+    runs-on: self-hosted
+
+    steps:
+    - uses: actions/checkout@v2
+    - name: deploy
+      run: ./deploy.sh
+    - name: Upload a Build Artifact
+      uses: actions/upload-artifact@v2.1.4
+      with:
+        # Artifact name
+        name: firmwares
+        # A file, directory or wildcard pattern that describes what to upload
+        path: deploy
+        
