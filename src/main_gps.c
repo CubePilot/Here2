@@ -28,6 +28,8 @@ WORKER_THREAD_DECLARE_EXTERN(WT)
 PUBSUB_TOPIC_GROUP_DECLARE_EXTERN(UBX_MSG_TOPIC_GROUP)
 
 PARAM_DEFINE_UINT8_PARAM_STATIC(nav5_dynModel, "dynModel", 8, 0, 10)
+PARAM_DEFINE_UINT8_PARAM_STATIC(dgnssMode, "dgnssMode", 3, 2, 3)
+PARAM_DEFINE_UINT8_PARAM_STATIC(gnssConfig, "gnssConfig", 105, 1, 127)
 
 // #define gps_debug(msg, fmt, args...) do {uavcan_send_debug_msg(LOG_LEVEL_DEBUG, msg, fmt, ## args); } while(0);
 #define gps_debug(msg, fmt, args...)
@@ -101,7 +103,9 @@ uint8_t parsed_msg_buffer[1024];
 enum ubx_cfg_steps {
     STEP_CFG_RATE,
     STEP_CFG_NAV5,
-    STEP_CFG_MSG
+    STEP_CFG_MSG,
+    STEP_CFG_DGNSS,
+    STEP_CFG_GNSS,
 };
 
 //Msg topics and listeners
@@ -412,7 +416,6 @@ static void ubx_gps_configure_msgs()
         }
         case STEP_CFG_MSG: {
             if (ubx_handle.cfg_msg_index >= ubx_handle.total_msg_cfgs) {
-                ubx_handle.configured = true;
                 ubx_handle.cfg_step++;
                 break;
             }
@@ -427,6 +430,55 @@ static void ubx_gps_configure_msgs()
                 cfg_msg.msgClass = ubx_cfg_list[ubx_handle.cfg_msg_index].class_id;
                 cfg_msg.msgID = ubx_cfg_list[ubx_handle.cfg_msg_index].msg_id;
                 send_message(UBX_CFG_MSG_CLASS_ID, UBX_CFG_MSG_MSG_ID, (uint8_t*)&cfg_msg, sizeof(cfg_msg));
+            }
+            break;
+        }
+        case STEP_CFG_DGNSS: {
+            if (ubx_handle.do_cfg) {
+                uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "setup ubx_cfg_dgnss_getset_s");
+                struct ubx_cfg_dgnss_getset_s cfg_dgnss = {};
+
+                cfg_dgnss.dgnssMode = dgnssMode;
+
+                send_message(UBX_CFG_DGNSS_CLASS_ID, UBX_CFG_DGNSS_MSG_ID, (uint8_t*)&cfg_dgnss, sizeof(cfg_dgnss));
+                ubx_handle.do_cfg = false;
+                ubx_handle.cfg_step++;
+            } else {
+                request_message(UBX_CFG_DGNSS_CLASS_ID, UBX_CFG_DGNSS_MSG_ID);
+                ubx_handle.do_cfg = true;
+            }
+            break;
+        }
+        case STEP_CFG_GNSS: {
+            if (ubx_handle.do_cfg) {
+                for (int a=0; a <= 6; a++) {
+                    struct __attribute__((__packed__)) ubx_cfg_gnss_s {
+                        struct ubx_cfg_gnss_getset_s cfg_gnss;
+                        struct ubx_cfg_gnss_getset_rep_s cfg_gnss_rep;
+                    };
+                    
+                    struct ubx_cfg_gnss_s cfg_gnss = {};
+                    
+                    cfg_gnss.cfg_gnss.numConfigBlocks = 1;
+                    cfg_gnss.cfg_gnss.numTrkChUse = 0xff;
+                    
+                    cfg_gnss.cfg_gnss_rep.gnssId = a;
+                    cfg_gnss.cfg_gnss_rep.resTrkCh = 4;
+                    cfg_gnss.cfg_gnss_rep.maxTrkCh = 12;
+                    cfg_gnss.cfg_gnss_rep.flags = 1<<16;
+                    if ((gnssConfig & (1 << a)) > 0)
+                        cfg_gnss.cfg_gnss_rep.flags += 1;
+                    
+                    uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "setup ubx_cfg_gnss_s %u %u", cfg_gnss.cfg_gnss_rep.gnssId, cfg_gnss.cfg_gnss_rep.flags);
+
+                    send_message(UBX_CFG_GNSS_CLASS_ID, UBX_CFG_GNSS_MSG_ID, (uint8_t*)&cfg_gnss, sizeof(cfg_gnss));
+                    ubx_handle.do_cfg = false;
+                }
+                
+                ubx_handle.configured = true;
+            } else {
+                request_message(UBX_CFG_GNSS_CLASS_ID, UBX_CFG_GNSS_MSG_ID);
+                ubx_handle.do_cfg = true;
             }
             break;
         }
@@ -603,6 +655,8 @@ static void ubx_nav_pvt_handler(size_t msg_size, const void* msg, void* ctx)
                 fix2.gnss_timestamp.usec = 0;
                 fix2.gnss_time_standard = UAVCAN_EQUIPMENT_GNSS_FIX2_GNSS_TIME_STANDARD_NONE;
             }
+            
+            fix2.timestamp.usec = chVTGetSystemTimeX();
 
             //Publish Fix Packet over CAN
             uavcan_broadcast(0, &uavcan_equipment_gnss_Fix2_descriptor, CANARD_TRANSFER_PRIORITY_HIGH, &fix2);
