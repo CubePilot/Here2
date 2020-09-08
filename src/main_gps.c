@@ -38,7 +38,7 @@ PARAM_DEFINE_UINT8_PARAM_STATIC(gnssConfig, "gnssConfig", 105, 1, 127)
 
 #define GPS_CFG_BAUD 230400U
 static const uint32_t baudrates[] = {9600U, 115200U, 4800U, 19200U, 38400U, 57600U, 230400U};
-char init_blob[] = "\265\142\006\001\003\000\001\006\001\022\117$PUBX,41,1,0023,0001,230400,0*1E\r\n";
+char init_blob[] = "\265\142\006\001\003\000\001\006\001\022\117$PUBX,41,1,0023,0021,230400,0*1C\r\n";
 
 // #define GPS_CFG_BAUD 115200U
 // static const uint32_t baudrates[] = {9600U, 115200U, 4800U, 19200U, 38400U, 57600U, 230400U};
@@ -76,6 +76,7 @@ struct ubx_gps_handle_s {
     uint32_t last_baud_change_ms;
     struct worker_thread_listener_task_s gps_inject_listener_task;
     uint8_t total_msg_cfgs;
+    uint8_t attempt;
     uint32_t dop_iTOW;
     uint32_t pvt_iTOW;
     struct uavcan_equipment_gnss_Auxiliary_s aux_msg;
@@ -90,7 +91,7 @@ struct ubx_msg_cfg_s {
     pubsub_message_handler_func_ptr handler;
 };
 
-// static struct rtcm_parser_s rtcm_parser;
+static struct rtcm_parser_s rtcm_parser;
 static struct gps_handle_s gps_handle;
 static void ubx_gps_spinner(void *ctx);
 static void ubx_init(struct ubx_gps_handle_s *ubx_handle, SerialDriver* serial, SerialConfig *sercfg);
@@ -193,6 +194,11 @@ struct ubx_msg_cfg_s ubx_cfg_list[] = {
     {UBX_NAV_EOE_CLASS_ID, UBX_NAV_EOE_MSG_ID, 1, &ubx_nav_eoe_topic, &ubx_nav_eoe_listener, ubx_nav_eoe_handler},
     {UBX_NAV_DOP_CLASS_ID, UBX_NAV_DOP_MSG_ID, 5, &ubx_nav_dop_topic, &ubx_nav_dop_listener, ubx_nav_dop_handler},
 
+    {0xF5, 0x4D, 1, NULL, NULL, NULL},
+    {0xF5, 0x57, 1, NULL, NULL, NULL},
+    {0xF5, 0x61, 1, NULL, NULL, NULL},
+    {0xF5, 0x7f, 1, NULL, NULL, NULL},
+    {0xF5, 0xe6, 10, NULL, NULL, NULL},
     // IO debug messages
 //     {UBX_RXM_RTCM_CLASS_ID, UBX_RXM_RTCM_MSG_ID, 1, &ubx_rxm_rtcm_topic, &ubx_rxm_rtcm_listener, ubx_rxm_rtcm_handler},
 //     {UBX_MON_IO_CLASS_ID, UBX_MON_IO_MSG_ID, 1, &ubx_mon_io_topic, &ubx_mon_io_listener, ubx_mon_io_handler},
@@ -203,7 +209,7 @@ struct ubx_msg_cfg_s ubx_cfg_list[] = {
 static struct worker_thread_timer_task_s init_task;
 
 
-THD_WORKING_AREA(ubx_gps_thd_wa, 256);
+THD_WORKING_AREA(ubx_gps_thd_wa, 384);
 
 static void init_task_func(struct worker_thread_timer_task_s *task) {
     if (get_boot_msg_valid() && boot_msg_id == SHARED_MSG_BOOT_INFO && boot_msg.boot_info_msg.boot_reason == 127) {
@@ -235,13 +241,13 @@ static void init_task_func(struct worker_thread_timer_task_s *task) {
     }
 }
 
-// static void rtcm_frame_cb(size_t frame_len, uint8_t* frame, void* ctx) {
-//     uint16_t type = ((uint16_t)frame[3]<<8 | frame[4]) >> 4;
-//     uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "parse %u", (unsigned)type);
-// }
+static void rtcm_frame_cb(size_t frame_len, uint8_t* frame, void* ctx) {
+    uint16_t type = ((uint16_t)frame[3]<<8 | frame[4]) >> 4;
+    uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "rtcm parse %u", (unsigned)type);
+}
 
 RUN_AFTER(INIT_END) {
-//     rtcm_parser_init(&rtcm_parser, rtcm_frame_cb, NULL);
+    rtcm_parser_init(&rtcm_parser, rtcm_frame_cb, NULL);
     worker_thread_add_timer_task(&WT, &init_task, init_task_func, NULL, LL_MS2ST(10), false);
 }
 
@@ -301,6 +307,8 @@ static void ubx_init(struct ubx_gps_handle_s *handle, SerialDriver* serial, Seri
 
     //Register Messages in the cfg list
     for (uint8_t i = 0; i < handle->total_msg_cfgs; i++) {
+        if(ubx_cfg_list[i].topic == NULL)
+            continue;
         pubsub_init_topic(ubx_cfg_list[i].topic, &UBX_MSG_TOPIC_GROUP);
         if (gps_ubx_init_msg_topic(&gps_handle, ubx_cfg_list[i].class_id, ubx_cfg_list[i].msg_id, parsed_msg_buffer, sizeof(parsed_msg_buffer), ubx_cfg_list[i].topic)) {
             worker_thread_add_listener_task(&WT, ubx_cfg_list[i].listener_task, ubx_cfg_list[i].topic, ubx_cfg_list[i].handler, handle);
@@ -359,7 +367,9 @@ static void ubx_gps_spinner(void *ctx)
         byte = chnGetTimeout(ubx_handle.serial, TIME_INFINITE);
         if (gps_spin(&gps_handle, (uint8_t)byte) && ubx_handle.sercfg.speed == GPS_CFG_BAUD) {
             ubx_handle.initialised = true;
+            rtcm_parser.rtcm_frame_buf_len = 0;
         }
+        rtcm_parser_push_byte(&rtcm_parser, (uint8_t)byte);
     }
 }
 
@@ -430,6 +440,13 @@ static void ubx_gps_configure_msgs()
                 cfg_msg.msgClass = ubx_cfg_list[ubx_handle.cfg_msg_index].class_id;
                 cfg_msg.msgID = ubx_cfg_list[ubx_handle.cfg_msg_index].msg_id;
                 send_message(UBX_CFG_MSG_CLASS_ID, UBX_CFG_MSG_MSG_ID, (uint8_t*)&cfg_msg, sizeof(cfg_msg));
+                
+                ubx_handle.attempt++;
+                
+                if(ubx_handle.attempt > 3) {
+                    ubx_handle.cfg_msg_index++;
+                    ubx_handle.attempt = 0;
+                }
             }
             break;
         }
