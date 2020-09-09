@@ -17,6 +17,7 @@
 #include <uavcan.equipment.gnss.Fix.h>
 #include <uavcan.equipment.gnss.Fix2.h>
 #include <uavcan.equipment.gnss.Auxiliary.h>
+#include <uavcan.equipment.gnss.RTCMStream.h>
 #include <ubx_msgs.h>
 #include <time.h>
 #include "rtcm_parser.h"
@@ -29,7 +30,7 @@ PUBSUB_TOPIC_GROUP_DECLARE_EXTERN(UBX_MSG_TOPIC_GROUP)
 
 PARAM_DEFINE_UINT8_PARAM_STATIC(nav5_dynModel, "dynModel", 8, 0, 10)
 PARAM_DEFINE_UINT8_PARAM_STATIC(dgnssMode, "dgnssMode", 3, 2, 3)
-PARAM_DEFINE_UINT8_PARAM_STATIC(gnssConfig, "gnssConfig", 105, 1, 127)
+PARAM_DEFINE_UINT8_PARAM_STATIC(gnssConfig, "gnssConfig", 97, 1, 127)
 
 // #define gps_debug(msg, fmt, args...) do {uavcan_send_debug_msg(LOG_LEVEL_DEBUG, msg, fmt, ## args); } while(0);
 #define gps_debug(msg, fmt, args...)
@@ -106,7 +107,8 @@ enum ubx_cfg_steps {
     STEP_CFG_NAV5,
     STEP_CFG_MSG,
     STEP_CFG_DGNSS,
-    STEP_CFG_GNSS,
+    STEP_CFG_GNSS,    
+    STEP_CFG_COMPLETE
 };
 
 //Msg topics and listeners
@@ -160,6 +162,16 @@ static void ubx_nav_pvt_handler(size_t msg_size, const void* msg, void* ctx);
 struct pubsub_topic_s ubx_cfg_nav5_topic;
 struct worker_thread_listener_task_s ubx_cfg_nav5_listener;
 static void ubx_cfg_nav5_handler(size_t msg_size, const void* msg, void* ctx);
+
+// CFG-dgnss
+struct pubsub_topic_s ubx_cfg_dgnss_topic;
+struct worker_thread_listener_task_s ubx_cfg_dgnss_listener;
+static void ubx_cfg_dgnss_handler(size_t msg_size, const void* msg, void* ctx);
+
+// CFG-gnss
+struct pubsub_topic_s ubx_cfg_gnss_topic;
+struct worker_thread_listener_task_s ubx_cfg_gnss_listener;
+static void ubx_cfg_gnss_handler(size_t msg_size, const void* msg, void* ctx);
 
 // NAV-EOE
 struct pubsub_topic_s ubx_nav_eoe_topic;
@@ -241,9 +253,20 @@ static void init_task_func(struct worker_thread_timer_task_s *task) {
     }
 }
 
+static struct uavcan_equipment_gnss_RTCMStream_s rtcm;
+
 static void rtcm_frame_cb(size_t frame_len, uint8_t* frame, void* ctx) {
     uint16_t type = ((uint16_t)frame[3]<<8 | frame[4]) >> 4;
     uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "rtcm parse %u", (unsigned)type);
+    for (uint a=0; a < frame_len; a+=128) {
+        uint8_t size = frame_len - a < 128 ? frame_len - a : 128;
+
+        rtcm.protocol_id = 3;
+        rtcm.data_len = size;
+        memcpy(rtcm.data, (uint8_t*)&frame[a], size);
+
+        uavcan_broadcast(0, &uavcan_equipment_gnss_RTCMStream_descriptor, CANARD_TRANSFER_PRIORITY_HIGH, &rtcm);
+    }
 }
 
 RUN_AFTER(INIT_END) {
@@ -296,6 +319,18 @@ static void ubx_init(struct ubx_gps_handle_s *handle, SerialDriver* serial, Seri
     if (gps_ubx_init_msg_topic(&gps_handle, UBX_CFG_NAV5_CLASS_ID, UBX_CFG_NAV5_MSG_ID, parsed_msg_buffer, sizeof(parsed_msg_buffer), &ubx_cfg_nav5_topic)) {
         worker_thread_add_listener_task(&WT, &ubx_cfg_nav5_listener, &ubx_cfg_nav5_topic, ubx_cfg_nav5_handler, handle);
         uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "Registered Topic for 0x%x 0x%x", UBX_CFG_NAV5_CLASS_ID, UBX_CFG_NAV5_MSG_ID);
+    }
+    
+    pubsub_init_topic(&ubx_cfg_dgnss_topic, &UBX_MSG_TOPIC_GROUP);
+    if (gps_ubx_init_msg_topic(&gps_handle, UBX_CFG_DGNSS_CLASS_ID, UBX_CFG_DGNSS_MSG_ID, parsed_msg_buffer, sizeof(parsed_msg_buffer), &ubx_cfg_dgnss_topic)) {
+        worker_thread_add_listener_task(&WT, &ubx_cfg_dgnss_listener, &ubx_cfg_dgnss_topic, ubx_cfg_dgnss_handler, handle);
+        uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "Registered Topic for 0x%x 0x%x", UBX_CFG_DGNSS_CLASS_ID, UBX_CFG_DGNSS_MSG_ID);
+    }
+    
+    pubsub_init_topic(&ubx_cfg_gnss_topic, &UBX_MSG_TOPIC_GROUP);
+    if (gps_ubx_init_msg_topic(&gps_handle, UBX_CFG_GNSS_CLASS_ID, UBX_CFG_GNSS_MSG_ID, parsed_msg_buffer, sizeof(parsed_msg_buffer), &ubx_cfg_gnss_topic)) {
+        worker_thread_add_listener_task(&WT, &ubx_cfg_gnss_listener, &ubx_cfg_gnss_topic, ubx_cfg_gnss_handler, handle);
+        uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "Registered Topic for 0x%x 0x%x", UBX_CFG_GNSS_CLASS_ID, UBX_CFG_GNSS_MSG_ID);
     }
 
     //MON-VER
@@ -356,6 +391,7 @@ static void send_message(uint8_t class_id, uint8_t msg_id, uint8_t* payload, siz
 
 static void request_message(uint8_t class_id, uint8_t msg_id)
 {
+    gps_debug("CFG", "request_message = %x %x", class_id, msg_id);
     send_message(class_id, msg_id, NULL, 0);
 }
 
@@ -462,7 +498,13 @@ static void ubx_gps_configure_msgs()
                 ubx_handle.cfg_step++;
             } else {
                 request_message(UBX_CFG_DGNSS_CLASS_ID, UBX_CFG_DGNSS_MSG_ID);
-                ubx_handle.do_cfg = true;
+                
+                ubx_handle.attempt++;
+                
+                if(ubx_handle.attempt > 3) {
+                    ubx_handle.cfg_step++;
+                    ubx_handle.attempt = 0;
+                }
             }
             break;
         }
@@ -482,6 +524,10 @@ static void ubx_gps_configure_msgs()
                     cfg_gnss.cfg_gnss_rep.gnssId = a;
                     cfg_gnss.cfg_gnss_rep.resTrkCh = 4;
                     cfg_gnss.cfg_gnss_rep.maxTrkCh = 12;
+                    if(a==5 || a == 1){
+                        cfg_gnss.cfg_gnss_rep.resTrkCh = 0;
+                        cfg_gnss.cfg_gnss_rep.maxTrkCh = 3;
+                    }
                     cfg_gnss.cfg_gnss_rep.flags = 1<<16;
                     if ((gnssConfig & (1 << a)) > 0)
                         cfg_gnss.cfg_gnss_rep.flags += 1;
@@ -491,13 +537,20 @@ static void ubx_gps_configure_msgs()
                     send_message(UBX_CFG_GNSS_CLASS_ID, UBX_CFG_GNSS_MSG_ID, (uint8_t*)&cfg_gnss, sizeof(cfg_gnss));
                     ubx_handle.do_cfg = false;
                 }
-                
-                ubx_handle.configured = true;
             } else {
                 request_message(UBX_CFG_GNSS_CLASS_ID, UBX_CFG_GNSS_MSG_ID);
-                ubx_handle.do_cfg = true;
+                
+                ubx_handle.attempt++;
+                
+                if(ubx_handle.attempt > 3) {
+                    ubx_handle.cfg_step++;
+                    ubx_handle.attempt = 0;
+                }
             }
             break;
+        }
+        case STEP_CFG_COMPLETE: {
+            ubx_handle.configured = true;
         }
         default:
             break;
@@ -518,6 +571,56 @@ static void ubx_cfg_nav5_handler(size_t msg_size, const void* msg, void* ctx) {
         _handle->cfg_step++;
     } else {
         ubx_handle.do_cfg = true;
+    }
+}
+
+static void ubx_cfg_dgnss_handler(size_t msg_size, const void* msg, void* ctx) {
+    (void)msg_size;
+    struct ubx_gps_handle_s* _handle = (struct ubx_gps_handle_s*)ctx;
+    const struct gps_msg *parsed_msg = msg;
+
+    struct ubx_cfg_dgnss_getset_s *cfg_dgnss = ubx_parse_ubx_cfg_dgnss_getset(parsed_msg->frame_buffer, parsed_msg->msg_len);
+
+    gps_debug("CFG-DGNSS", "dgnssMode = %u", cfg_dgnss->dgnssMode);
+
+    if (_handle->cfg_step == STEP_CFG_DGNSS && cfg_dgnss->dgnssMode == dgnssMode) {
+        _handle->cfg_step++;
+    } else {
+        ubx_handle.do_cfg = true;
+    }
+}
+
+static void ubx_cfg_gnss_handler(size_t msg_size, const void* msg, void* ctx) {
+    (void)msg_size;
+    struct ubx_gps_handle_s* _handle = (struct ubx_gps_handle_s*)ctx;
+    const struct gps_msg *parsed_msg = msg;
+
+    uint8_t num_repeat_blocks = 0;
+
+    struct ubx_cfg_gnss_getset_rep_s *cfg_gnss_rep = ubx_parse_ubx_cfg_gnss_getset_rep(parsed_msg->frame_buffer, parsed_msg->msg_len, &num_repeat_blocks);
+    
+    if (cfg_gnss_rep != NULL) {
+        gps_debug("CFG-GNSS", "num_repeat_blocks = %u", num_repeat_blocks);
+        
+        for(int a=0;a<num_repeat_blocks;a++) {
+            int id = cfg_gnss_rep[a].gnssId;
+            bool enabled = (cfg_gnss_rep[a].flags & 1) > 0;
+            int bitmask = 1 << id;
+            gps_debug("CFG-GNSS", " %u raw flags = %u", a, cfg_gnss_rep[a].flags);
+            if ((gnssConfig & bitmask) > 0 && !enabled) {
+                gps_debug("CFG-GNSS", "enable = %u flags = %u", a, cfg_gnss_rep[a].flags);
+                ubx_handle.do_cfg = true;
+            } else if ((gnssConfig & bitmask) == 0 && enabled) {
+                gps_debug("CFG-GNSS", "disable = %u flags = %u", a, cfg_gnss_rep[a].flags);
+                ubx_handle.do_cfg = true;
+            }
+        }
+
+        if (_handle->cfg_step == STEP_CFG_GNSS && ubx_handle.do_cfg == false) {
+            _handle->cfg_step++;
+        } else {
+            ubx_handle.do_cfg = true;
+        }
     }
 }
 

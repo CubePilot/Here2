@@ -55,7 +55,7 @@ static enum message_validity_t check_rtcm_message(const uint8_t* frame_buf, cons
 
     size_t len_field_val = (uint16_t)frame_buf[1]<<8 | frame_buf[2];
 
-    if (len_field_val+6 > RTCM_MAX_MSG_LEN) {
+    if (len_field_val+6 > RTCM_MAX_MSG_LEN || len_field_val == 0) {
         return MESSAGE_INVALID;
     }
 
