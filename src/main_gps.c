@@ -92,7 +92,7 @@ struct ubx_msg_cfg_s {
     pubsub_message_handler_func_ptr handler;
 };
 
-static struct rtcm_parser_s rtcm_parser;
+//static struct rtcm_parser_s rtcm_parser;
 static struct gps_handle_s gps_handle;
 static void ubx_gps_spinner(void *ctx);
 static void ubx_init(struct ubx_gps_handle_s *ubx_handle, SerialDriver* serial, SerialConfig *sercfg);
@@ -206,11 +206,13 @@ struct ubx_msg_cfg_s ubx_cfg_list[] = {
     {UBX_NAV_EOE_CLASS_ID, UBX_NAV_EOE_MSG_ID, 1, &ubx_nav_eoe_topic, &ubx_nav_eoe_listener, ubx_nav_eoe_handler},
     {UBX_NAV_DOP_CLASS_ID, UBX_NAV_DOP_MSG_ID, 5, &ubx_nav_dop_topic, &ubx_nav_dop_listener, ubx_nav_dop_handler},
 
+/*   base only
     {0xF5, 0x4D, 1, NULL, NULL, NULL},
     {0xF5, 0x57, 1, NULL, NULL, NULL},
     {0xF5, 0x61, 1, NULL, NULL, NULL},
     {0xF5, 0x7f, 1, NULL, NULL, NULL},
     {0xF5, 0xe6, 10, NULL, NULL, NULL},
+*/
     // IO debug messages
 //     {UBX_RXM_RTCM_CLASS_ID, UBX_RXM_RTCM_MSG_ID, 1, &ubx_rxm_rtcm_topic, &ubx_rxm_rtcm_listener, ubx_rxm_rtcm_handler},
 //     {UBX_MON_IO_CLASS_ID, UBX_MON_IO_MSG_ID, 1, &ubx_mon_io_topic, &ubx_mon_io_listener, ubx_mon_io_handler},
@@ -270,7 +272,7 @@ static void rtcm_frame_cb(size_t frame_len, uint8_t* frame, void* ctx) {
 }
 
 RUN_AFTER(INIT_END) {
-    rtcm_parser_init(&rtcm_parser, rtcm_frame_cb, NULL);
+    //rtcm_parser_init(&rtcm_parser, rtcm_frame_cb, NULL);
     worker_thread_add_timer_task(&WT, &init_task, init_task_func, NULL, LL_MS2ST(10), false);
 }
 
@@ -403,9 +405,9 @@ static void ubx_gps_spinner(void *ctx)
         byte = chnGetTimeout(ubx_handle.serial, TIME_INFINITE);
         if (gps_spin(&gps_handle, (uint8_t)byte) && ubx_handle.sercfg.speed == GPS_CFG_BAUD) {
             ubx_handle.initialised = true;
-            rtcm_parser.rtcm_frame_buf_len = 0;
+            //rtcm_parser.rtcm_frame_buf_len = 0;
         }
-        rtcm_parser_push_byte(&rtcm_parser, (uint8_t)byte);
+        //rtcm_parser_push_byte(&rtcm_parser, (uint8_t)byte);
     }
 }
 
