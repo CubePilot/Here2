@@ -31,6 +31,7 @@ PUBSUB_TOPIC_GROUP_DECLARE_EXTERN(UBX_MSG_TOPIC_GROUP)
 PARAM_DEFINE_UINT8_PARAM_STATIC(nav5_dynModel, "dynModel", 8, 0, 10)
 PARAM_DEFINE_UINT8_PARAM_STATIC(dgnssMode, "dgnssMode", 3, 2, 3)
 PARAM_DEFINE_UINT8_PARAM_STATIC(gnssConfig, "gnssConfig", 97, 1, 127)
+PARAM_DEFINE_UINT8_PARAM_STATIC(passThrough, "passThrough", 0, 0, 2)
 
 // #define gps_debug(msg, fmt, args...) do {uavcan_send_debug_msg(LOG_LEVEL_DEBUG, msg, fmt, ## args); } while(0);
 #define gps_debug(msg, fmt, args...)
@@ -99,6 +100,8 @@ static void ubx_init(struct ubx_gps_handle_s *ubx_handle, SerialDriver* serial, 
 static void ubx_gps_init_loop(struct worker_thread_timer_task_s *task);
 static void send_init_blob(SerialDriver* serial);
 static void ubx_gps_configure_msgs(void);
+static void send_message(uint8_t class_id, uint8_t msg_id, uint8_t* payload, size_t payload_len);
+static void request_message(uint8_t class_id, uint8_t msg_id);
 
 uint8_t parsed_msg_buffer[1024];
 
@@ -223,7 +226,7 @@ struct ubx_msg_cfg_s ubx_cfg_list[] = {
 static struct worker_thread_timer_task_s init_task;
 
 
-THD_WORKING_AREA(ubx_gps_thd_wa, 384);
+THD_WORKING_AREA(ubx_gps_thd_wa, 512);
 
 static void init_task_func(struct worker_thread_timer_task_s *task) {
     if (get_boot_msg_valid() && boot_msg_id == SHARED_MSG_BOOT_INFO && boot_msg.boot_info_msg.boot_reason == 127) {
@@ -258,8 +261,8 @@ static void init_task_func(struct worker_thread_timer_task_s *task) {
 static struct uavcan_equipment_gnss_RTCMStream_s rtcm;
 
 static void rtcm_frame_cb(size_t frame_len, uint8_t* frame, void* ctx) {
-    uint16_t type = ((uint16_t)frame[3]<<8 | frame[4]) >> 4;
-    uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "rtcm parse %u", (unsigned)type);
+    //uint16_t type = ((uint16_t)frame[3]<<8 | frame[4]) >> 4;
+    //uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "rtcm parse %u", (unsigned)type);
     for (uint a=0; a < frame_len; a+=128) {
         uint8_t size = frame_len - a < 128 ? frame_len - a : 128;
 
@@ -401,13 +404,33 @@ static void ubx_gps_spinner(void *ctx)
 {
     (void)ctx;
     int16_t byte;
-    while(true) {
-        byte = chnGetTimeout(ubx_handle.serial, TIME_INFINITE);
-        if (gps_spin(&gps_handle, (uint8_t)byte) && ubx_handle.sercfg.speed == GPS_CFG_BAUD) {
-            ubx_handle.initialised = true;
-            //rtcm_parser.rtcm_frame_buf_len = 0;
+    uint8_t passThrough_len = 0;
+    uint8_t passthrough_buffer[50];
+    uint32_t passthrough_send = millis();
+    
+    while(true) {        
+        byte = chnGetTimeout(ubx_handle.serial, 150);
+        if (byte != MSG_TIMEOUT) {
+            if(passThrough)
+            {
+                passthrough_buffer[passThrough_len] = byte;
+                passThrough_len++;
+            }
+            if (gps_spin(&gps_handle, (uint8_t)byte) && ((ubx_handle.sercfg.speed == GPS_CFG_BAUD)))// && passThrough != 2) || (ubx_handle.sercfg.speed == 9600 && passThrough == 2))) {
+            {
+                if(ubx_handle.initialised == false)
+                    uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "initialised");
+                ubx_handle.initialised = true;
+                //rtcm_parser.rtcm_frame_buf_len = 0;
+            }
+            //rtcm_parser_push_byte(&rtcm_parser, (uint8_t)byte);
         }
-        //rtcm_parser_push_byte(&rtcm_parser, (uint8_t)byte);
+        
+        if(passThrough_len >= 50 || passThrough_len > 0 && (millis() - passthrough_send) > 10) {
+            rtcm_frame_cb(passThrough_len, passthrough_buffer, NULL);
+            passThrough_len = 0;
+            passthrough_send = millis();
+        }
     }
 }
 
@@ -415,15 +438,38 @@ static void ubx_gps_init_loop(struct worker_thread_timer_task_s *task)
 {
     struct ubx_gps_handle_s *handle = (struct ubx_gps_handle_s *)task->ctx;
     static uint8_t try_cnt;
-    if (!handle->initialised && (try_cnt % 10)) {
+    if (!handle->initialised && (try_cnt % 10) == 0) {
         sdStop(handle->serial);
         handle->baudrate_index++;
         handle->baudrate_index %= sizeof(baudrates)/sizeof(baudrates[0]);
         handle->sercfg.speed = baudrates[handle->baudrate_index];
         sdStart(handle->serial, &handle->sercfg);
+        uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "try baud %u", handle->sercfg.speed);
         send_init_blob(handle->serial);
-    } else if (!handle->configured) {
-        ubx_gps_configure_msgs();
+    } else if (handle->initialised && !handle->configured) {
+        if (passThrough == 2) {
+            handle->configured = true;
+            // train
+            uint8_t train[2] = {0x55,0x55};
+            // safeboot
+            request_message(0x09,0x07);
+            chThdSleepMilliseconds(500);
+            
+            sdStop(ubx_handle.serial);
+            ubx_handle.sercfg.speed = 9600;
+            sdStart(ubx_handle.serial, &ubx_handle.sercfg);
+            // train
+            sdWrite(ubx_handle.serial, train, 2);
+            // init to new baud
+            send_init_blob(handle->serial);
+            chThdSleepMilliseconds(50);
+            sdStop(ubx_handle.serial);
+            ubx_handle.sercfg.speed = GPS_CFG_BAUD;
+            sdStart(ubx_handle.serial, &ubx_handle.sercfg);
+            request_message(0x0a, 0x04);
+        } else {
+            ubx_gps_configure_msgs();
+        }
     }
     try_cnt++;
 
