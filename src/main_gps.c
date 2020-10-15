@@ -438,7 +438,7 @@ static void ubx_gps_init_loop(struct worker_thread_timer_task_s *task)
 {
     struct ubx_gps_handle_s *handle = (struct ubx_gps_handle_s *)task->ctx;
     static uint8_t try_cnt;
-    if (!handle->initialised && (try_cnt % 10) == 0) {
+    if (!handle->initialised && (try_cnt % 5) == 0) {
         sdStop(handle->serial);
         handle->baudrate_index++;
         handle->baudrate_index %= sizeof(baudrates)/sizeof(baudrates[0]);
@@ -558,33 +558,8 @@ static void ubx_gps_configure_msgs()
         }
         case STEP_CFG_GNSS: {
             if (ubx_handle.do_cfg) {
-                for (int a=0; a <= 6; a++) {
-                    struct __attribute__((__packed__)) ubx_cfg_gnss_s {
-                        struct ubx_cfg_gnss_getset_s cfg_gnss;
-                        struct ubx_cfg_gnss_getset_rep_s cfg_gnss_rep;
-                    };
-                    
-                    struct ubx_cfg_gnss_s cfg_gnss = {};
-                    
-                    cfg_gnss.cfg_gnss.numConfigBlocks = 1;
-                    cfg_gnss.cfg_gnss.numTrkChUse = 0xff;
-                    
-                    cfg_gnss.cfg_gnss_rep.gnssId = a;
-                    cfg_gnss.cfg_gnss_rep.resTrkCh = 4;
-                    cfg_gnss.cfg_gnss_rep.maxTrkCh = 12;
-                    if(a==5 || a == 1){
-                        cfg_gnss.cfg_gnss_rep.resTrkCh = 0;
-                        cfg_gnss.cfg_gnss_rep.maxTrkCh = 3;
-                    }
-                    cfg_gnss.cfg_gnss_rep.flags = 1<<16;
-                    if ((gnssConfig & (1 << a)) > 0)
-                        cfg_gnss.cfg_gnss_rep.flags += 1;
-                    
-                    uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "setup ubx_cfg_gnss_s %u %u", cfg_gnss.cfg_gnss_rep.gnssId, cfg_gnss.cfg_gnss_rep.flags);
-
-                    send_message(UBX_CFG_GNSS_CLASS_ID, UBX_CFG_GNSS_MSG_ID, (uint8_t*)&cfg_gnss, sizeof(cfg_gnss));
-                    ubx_handle.do_cfg = false;
-                }
+                request_message(UBX_CFG_GNSS_CLASS_ID, UBX_CFG_GNSS_MSG_ID);
+                ubx_handle.do_cfg = false;
             } else {
                 request_message(UBX_CFG_GNSS_CLASS_ID, UBX_CFG_GNSS_MSG_ID);
                 
@@ -650,23 +625,54 @@ static void ubx_cfg_gnss_handler(size_t msg_size, const void* msg, void* ctx) {
     if (cfg_gnss_rep != NULL) {
         gps_debug("CFG-GNSS", "num_repeat_blocks = %u", num_repeat_blocks);
         
+        struct __attribute__((__packed__)) ubx_cfg_gnss_s {
+            struct ubx_cfg_gnss_getset_s cfg_gnss;
+            struct ubx_cfg_gnss_getset_rep_s cfg_gnss_rep[num_repeat_blocks];
+        };
+
+        struct ubx_cfg_gnss_s cfg_gnss;
+        
+        memset(&cfg_gnss, 0, sizeof(cfg_gnss));
+        
+        cfg_gnss.cfg_gnss.numConfigBlocks = num_repeat_blocks;
+        cfg_gnss.cfg_gnss.numTrkChUse = 0xff;
+        
         for(int a=0;a<num_repeat_blocks;a++) {
             int id = cfg_gnss_rep[a].gnssId;
             bool enabled = (cfg_gnss_rep[a].flags & 1) > 0;
             int bitmask = 1 << id;
-            gps_debug("CFG-GNSS", " %u raw flags = %u", a, cfg_gnss_rep[a].flags);
+            gps_debug("CFG-GNSS", " %u raw flags = %u  sz %u", a, cfg_gnss_rep[a].flags, sizeof(cfg_gnss));
+            uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", " %u raw flags = %u sz %u", cfg_gnss_rep[a].gnssId, cfg_gnss_rep[a].flags, sizeof(cfg_gnss));
             if ((gnssConfig & bitmask) > 0 && !enabled) {
-                gps_debug("CFG-GNSS", "enable = %u flags = %u", a, cfg_gnss_rep[a].flags);
+                //cfg_gnss_rep[a].flags |= 1 << 0;
+                uavcan_send_debug_msg(LOG_LEVEL_INFO, "CFG-GNSS", "enable = %u ", id);
                 ubx_handle.do_cfg = true;
             } else if ((gnssConfig & bitmask) == 0 && enabled) {
-                gps_debug("CFG-GNSS", "disable = %u flags = %u", a, cfg_gnss_rep[a].flags);
+                //cfg_gnss_rep[a].flags &= ~(1 << 0);
+                uavcan_send_debug_msg(LOG_LEVEL_INFO, "CFG-GNSS", "disable = %u ", id);
                 ubx_handle.do_cfg = true;
             }
+
+            cfg_gnss.cfg_gnss_rep[a].gnssId = id;
+            cfg_gnss.cfg_gnss_rep[a].resTrkCh = 4;
+            cfg_gnss.cfg_gnss_rep[a].maxTrkCh = 12;
+            if(id==5 || id == 1){ // sbas or qzss
+                cfg_gnss.cfg_gnss_rep[a].resTrkCh = 0;
+                cfg_gnss.cfg_gnss_rep[a].maxTrkCh = 3;
+            }
+            if(id==3){ // beidou
+                cfg_gnss.cfg_gnss_rep[a].resTrkCh = 4;
+                cfg_gnss.cfg_gnss_rep[a].maxTrkCh = 16;
+            }
+            cfg_gnss.cfg_gnss_rep[a].flags = (1<<16) + (1<<24);
+            if ((gnssConfig & bitmask) > 0)
+                cfg_gnss.cfg_gnss_rep[a].flags += 1;
         }
 
         if (_handle->cfg_step == STEP_CFG_GNSS && ubx_handle.do_cfg == false) {
             _handle->cfg_step++;
         } else {
+            send_message(UBX_CFG_GNSS_CLASS_ID, UBX_CFG_GNSS_MSG_ID, (uint8_t*)&cfg_gnss, sizeof(cfg_gnss));
             ubx_handle.do_cfg = true;
         }
     }
