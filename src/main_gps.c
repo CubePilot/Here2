@@ -39,7 +39,7 @@ PARAM_DEFINE_UINT8_PARAM_STATIC(passThrough, "passThrough", 0, 0, 2)
 #define GNSS_MEAS_RATE 200
 
 #define GPS_CFG_BAUD 230400U
-static const uint32_t baudrates[] = {9600U, 115200U, 4800U, 19200U, 38400U, 57600U, 230400U};
+static const uint32_t baudrates[] = {9600U, 115200U, 4800U, 19200U, 38400U, 57600U, 230400U, 460800U};
 char init_blob[] = "\265\142\006\001\003\000\001\006\001\022\117$PUBX,41,1,0023,0021,230400,0*1C\r\n";
 
 // #define GPS_CFG_BAUD 115200U
