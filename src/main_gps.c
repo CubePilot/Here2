@@ -365,6 +365,8 @@ static void ubx_init(struct ubx_gps_handle_s *handle, SerialDriver* serial, Seri
 
 static void send_init_blob(SerialDriver* serial)
 {
+    uint8_t train[2] = {0x55,0x55};
+    sdWrite(serial, train, 2);
     sdWrite(serial, (const uint8_t*)init_blob, sizeof(init_blob)-1);
 }
 
