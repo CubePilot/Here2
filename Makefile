@@ -32,12 +32,11 @@ spi_device \
 driver_ak09916 \
 driver_icm20x48 \
 driver_profiLED \
-driver_ms5611 
-
-#freemem_check \
-#stack_measurement \
-#load_measurement \
-#pubsub_miss_measurement
+driver_ms5611 \
+freemem_check \
+stack_measurement \
+load_measurement \
+pubsub_miss_measurement
 
 MESSAGES_ENABLED = \
 uavcan.protocol.debug.LogMessage \
