@@ -2,9 +2,10 @@
 
 export PATH=~/gcc-arm-none-eabi-6-2017-q2-update/bin/:$PATH
 
-pip2 install setuptools wheel virtualenv
-pip2 install pandas==0.21.0 tabulate natsort uavcan crcmod empy
-pip2 install tokenize
+python2 -m pip uninstall -y pandas uavcan 
+python2 -m pip install setuptools wheel virtualenv
+python2 -m pip install pandas==0.21.0 tabulate natsort uavcan==1.0.0.dev32 crcmod empy
+python2 -m pip install tokenize
 
 rm -rf deploy
 mkdir deploy
