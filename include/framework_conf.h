@@ -21,6 +21,8 @@
 #define CAN_EXPIRE_WORKER_THREAD                        can_thread
 #define UAVCAN_RX_WORKER_THREAD                         can_thread
 
+#define MODULE_UAVCAN_DEBUG_ENABLED                     TRUE
+
 //
 // Configure topic groups
 //
