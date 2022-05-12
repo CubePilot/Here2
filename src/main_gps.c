@@ -420,8 +420,10 @@ static void ubx_gps_spinner(void *ctx)
             }
             if (gps_spin(&gps_handle, (uint8_t)byte) && ((ubx_handle.sercfg.speed == GPS_CFG_BAUD)))// && passThrough != 2) || (ubx_handle.sercfg.speed == 9600 && passThrough == 2))) {
             {
-                if(ubx_handle.initialised == false)
+                if(ubx_handle.initialised == false) {
                     uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "initialised");
+                    uavcan_send_debug_msg(UAVCAN_PROTOCOL_DEBUG_LOGLEVEL_INFO, "", "freemem %u", chCoreGetStatusX());
+                }
                 ubx_handle.initialised = true;
                 //rtcm_parser.rtcm_frame_buf_len = 0;
             }
