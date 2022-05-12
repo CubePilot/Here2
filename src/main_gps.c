@@ -422,7 +422,6 @@ static void ubx_gps_spinner(void *ctx)
             {
                 if(ubx_handle.initialised == false) {
                     uavcan_send_debug_msg(LOG_LEVEL_INFO, "GPS", "initialised");
-                    uavcan_send_debug_msg(UAVCAN_PROTOCOL_DEBUG_LOGLEVEL_INFO, "", "freemem %u", chCoreGetStatusX());
                 }
                 ubx_handle.initialised = true;
                 //rtcm_parser.rtcm_frame_buf_len = 0;
@@ -578,6 +577,7 @@ static void ubx_gps_configure_msgs()
         }
         case STEP_CFG_COMPLETE: {
             ubx_handle.configured = true;
+            uavcan_send_debug_msg(UAVCAN_PROTOCOL_DEBUG_LOGLEVEL_INFO, "", "freemem %u", chCoreGetStatusX());
         }
         default:
             break;
