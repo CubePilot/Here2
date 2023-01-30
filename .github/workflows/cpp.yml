@@ -32,6 +32,9 @@ jobs:
         sudo tar xjf gcc-arm-none-eabi-6-2017-q2-update-linux.tar.bz2
         echo "... Cleaning"
         sudo rm gcc-arm-none-eabi-6-2017-q2-update-linux.tar.bz2
+        SHELL_LOGIN=".profile"
+        exportline="export PATH=$OPT/$ARM_ROOT/bin:\$PATH";
+        echo $exportline >> ~/$SHELL_LOGIN
     - name: stup
       run: mkdir Tools/environment_install && cd Tools && cd environment_install && wget https://github.com/ArduPilot/ardupilot/raw/master/Tools/environment_install/install-prereqs-ubuntu.sh && bash ./install-prereqs-ubuntu.sh -y
       env:
