@@ -37,6 +37,7 @@ jobs:
       env:
         SKIP_AP_COMPLETION_ENV: 1
         DO_AP_STM_ENV: 1
+        ARM_ROOT: gcc-arm-none-eabi-6-2017-q2-update-linux
     - name: deploy
       run: source ~/.profile && chmod 777 ./deploy.sh && ./deploy.sh
     - name: Upload a Build Artifact
